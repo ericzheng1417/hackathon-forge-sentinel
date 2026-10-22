@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "locale": "en_US.UTF-8",
+  "metadata": {
+    "appmode": "python-shiny",
+    "entrypoint": "app"
+  },
+  "python": {
+    "version": "3.11.9",
+    "package_manager": {
+      "name": "pip",
+      "version": "24.0",
+      "package_file": "requirements.txt"
+    }
+  },
+  "files": {
+    ".gitignore": {
+      "checksum": "1c672af32698b693e3c006bd4f8f629f"
+    },
+    "README.md": {
+      "checksum": "beb008f39697d5ec1585deeeedbbd346"
+    },
+    "app.py": {
+      "checksum": "945468680357bf4acc9cf1d51fb11981"
+    },
+    "forge_sentinel/__init__.py": {
+      "checksum": "c5abc752d33e41aead1de272f0eb02e7"
+    },
+    "forge_sentinel/charts.py": {
+      "checksum": "caf4495335ca14b22b66274cc6d32fbd"
+    },
+    "forge_sentinel/data.py": {
+      "checksum": "86ce2c506d5db124712b44074f1f97f5"
+    },
+    "forge_sentinel/engine.py": {
+      "checksum": "ec360c2affb12cb55cc4e864599c78f2"
+    },
+    "forge_sentinel/views.py": {
+      "checksum": "0bc8ef06881736f5b65781a5228a80d2"
+    },
+    "python/analyze.py": {
+      "checksum": "2dbebd7797d6af524c86e14c8e24f854"
+    },
+    "requirements.txt": {
+      "checksum": "331933ed44eefaa263596cdfc14fd53f"
+    },
+    "tests/js_reference.json": {
+      "checksum": "34028249738c44515f4e9dfd8407ccd8"
+    },
+    "tests/test_engine.py": {
+      "checksum": "52e46594d0ec60346e879e8c35905fee"
+    },
+    "www/style.css": {
+      "checksum": "a9327d1b8fe89482607b241f60a40809"
+    }
+  }
+}
