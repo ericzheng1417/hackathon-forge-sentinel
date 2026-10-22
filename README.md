@@ -9,8 +9,11 @@ spreadsheet (CSV) of past builds, one row per build. Each row has the part's mea
 the printer conditions during that build, such as oxygen level, humidity and laser power. The
 dashboard then:
 
-- plots strength over time and flags builds where the process seems to have changed,
-- says whether the process is *capable*: likely to keep meeting the minimum strength requirement,
+- summarises every measurement with standard Lean Six Sigma statistics (mean, median, standard
+  deviation, variance, CV, standard error, range, quartiles),
+- draws individuals and moving-range (I-MR) control charts and checks them with the
+  **8 standard tests for special causes**, flagging builds where the process seems to have changed,
+- says whether the process is *capable* (Cp, Cpk, Pp, Ppk): likely to keep meeting the strength specification,
 - shows which printer conditions move together with strength, so you know where to look first,
 - gives you a simple list for tracking investigations and fixes.
 
@@ -31,13 +34,22 @@ You don't need these to run the app, but they help you read it.
 | **Ti-6Al-4V** | The most common titanium alloy in aerospace (titanium with 6% aluminium and 4% vanadium). |
 | **Build** | One print job on one machine. The app assumes one strength test result per build. |
 | **Tensile strength** | How much pulling force a test sample takes before it breaks, measured in MPa (megapascals). Higher is stronger. |
-| **LSL** (lower specification limit) | The minimum acceptable strength. Default **900 MPa**. A build below it fails. |
+| **LSL / USL** (lower / upper specification limit) | The acceptable strength range. Defaults **900** and **1100 MPa** (examples only). A build outside it fails. Set USL to 0 for a minimum-only spec. |
 | **SPC** (statistical process control) | A standard way to tell normal build-to-build variation apart from a real change in the process. |
 | **Baseline** | The first N builds (default 25). They define what "normal" looks like, and later builds are compared against them. |
-| **Control limits (UCL / LCL)** | The band of normal variation, worked out from the baseline. A point outside it is a warning sign. |
+| **Control limits (UCL / LCL)** | The band of normal variation (mean ± 3σ), worked out from the baseline. A point outside it is a warning sign. |
+| **Zones A, B, C** | Bands on the control chart: C is within 1σ of the centre line, B is 1–2σ away, A is 2–3σ away. The 8 tests look for patterns across these zones. |
+| **Moving range (MR)** | The absolute difference between one build and the previous one. The MR chart shows short-term jumps. |
+| **8 tests for special causes** | Pattern checks (Western Electric / Nelson rules), such as one point beyond zone A, 8 points in a row on one side, or 6 points steadily rising. Listed in full on the Process control page. |
 | **Signal** | A build the SPC rules flag as unusual. It means "investigate", not "this caused the failure". |
-| **Cpl** | A capability score: how far average strength sits above the minimum, compared with normal variation. Higher is better. The default target is **1.33**, a common industry rule of thumb (adjustable). |
-| **Ppl** | Like Cpl, but uses the total spread of all builds rather than only the baseline variation. |
+| **Cp** | Potential capability: how many times the process spread fits inside the specification range. Ignores centring. |
+| **Cpk** | Actual capability: like Cp, but measured to the *nearer* spec limit, so an off-centre process scores lower. Default target **1.33**, a common rule of thumb (adjustable). |
+| **Cpl / Cpu** | One-sided versions: distance from the mean to the lower / upper limit, divided by 3σ. Cpk is the smaller of the two. |
+| **Pp / Ppk** | Same as Cp / Cpk but using the overall spread of all builds instead of short-term (baseline) variation. |
+| **Standard deviation (s) / variance (s²)** | How spread out the values are. Variance is the standard deviation squared. |
+| **CV** (coefficient of variation) | Standard deviation as a percentage of the mean, so variables with different units can be compared. |
+| **SE** (standard error of the mean) | How precisely the average is known: s ÷ √n. Shrinks as you test more builds. |
+| **Range / IQR** | Max − min, and the spread of the middle 50% of values (Q3 − Q1). |
 | **Wilson interval** | A range that shows how sure we can be about the pass rate, given how many builds were tested. |
 | **Correlation (r)** | How closely a printer condition moves with strength, from −1 to +1. It suggests where to look; it does not prove cause. |
 
@@ -48,8 +60,9 @@ You don't need these to run the app, but they help you read it.
 | Page | What you'll find |
 |---|---|
 | **Overview** | One-screen summary: pass rate, capability score, average strength, number of warnings, the strength trend chart, and the most recent builds. |
-| **Process control** | The detailed trend chart for any measurement (strength, oxygen, humidity…) and a log of every flagged build with the reason. |
-| **Capability** | Whether the process meets the strength target, with a checklist of what is and isn't proven. |
+| **Process control** | I chart with zones A/B/C and an MR chart for any measurement (strength, oxygen, humidity…), the 8 tests with how many points each flagged, and a log of every flagged build with the tests it failed. |
+| **Statistics** | Descriptive statistics for any variable (mean, median, SD, variance, CV, SE, range, quartiles, IQR), a box plot and histogram, and a table comparing all variables. |
+| **Capability** | Cp, Cpk, Pp, Ppk, Cpl, Cpu and centring, the observed pass rate with its uncertainty, and a checklist of what is and isn't proven. |
 | **Parameter analysis** | Which printer conditions are most associated with strength, plus counts of builds with high oxygen or humidity. |
 | **Build records** | Every build for the selected machine, newest first. Click ↗ for full details. Download as CSV. |
 | **Corrective actions** | Four suggested investigation steps. Set each one's status and add notes. |
@@ -58,7 +71,8 @@ You don't need these to run the app, but they help you read it.
 Other controls:
 
 - **Machine** dropdown (top): switch between printers. Each machine is analysed separately.
-- **Configure**: change the minimum strength, capability target, baseline size and alarm thresholds.
+- **Configure**: change the spec limits (LSL/USL), Cpk target, baseline size and alarm thresholds, and
+  choose which of the 8 tests (and the moving-range rule) to apply.
 - **Import data**: upload your own CSV (format below).
 - **Export report**: download all results as a JSON file to keep a record.
 - **Click any point on a chart** to see that build's details.
@@ -120,7 +134,7 @@ After deploying, open the app in Connect and use the **Access** tab to choose wh
 
 - *"No deployable content was found"*: the folder you picked has no `manifest.json`. Pick the
   folder that contains it.
-- *Python version error*: `manifest.json` asks for Python 3.11. If your server doesn't have it,
+- *Python version error*: `manifest.json` asks for Python 3.12.4. If your server doesn't have it,
   change `"version"` under `"python"` to one the server lists (3.10 or newer).
 - *Added or renamed files?* Regenerate the manifest with
   `rsconnect write-manifest shiny . --overwrite`.
@@ -168,8 +182,11 @@ uses only the Python standard library, so it doesn't need Shiny:
 python python/analyze.py my-builds.csv --machine LPBF-01 --lsl 900 > report.json
 ```
 
-Options: `--lsl` (minimum strength, default 900), `--baseline` (number of baseline builds, default 25),
-`--target` (Cpl target, default 1.33).
+Options: `--lsl` (lower spec, default 900), `--usl` (upper spec; omit for minimum-only),
+`--baseline` (number of baseline builds, default 25), `--target` (Cpk target, default 1.33),
+`--tests` (which special-cause tests to apply, default `1,2,3,4,5,6,7,8`), `--no-mr` (skip the moving-range rule).
+
+The report includes Cp/Cpk/Pp/Ppk, descriptive statistics, and every flagged build with its test numbers.
 
 ---
 
@@ -178,7 +195,7 @@ Options: `--lsl` (minimum strength, default 900), `--baseline` (number of baseli
 ```
 app.py                     The Shiny app: page layout, buttons, uploads, downloads
 forge_sentinel/
-  engine.py                All the statistics (control limits, signals, Cpl/Ppl, Wilson, correlations)
+  engine.py                All the statistics (descriptives, I-MR limits, 8 tests, Cp/Cpk/Pp/Ppk, Wilson, correlations)
   data.py                  Demo data, CSV checking, CSV export
   charts.py                Draws the charts (as SVG images)
   views.py                 Builds the HTML for each page
@@ -198,7 +215,9 @@ python -m unittest discover tests
 ```
 
 The tests check the statistics against known results, including reference output from the original
-JavaScript version of this tool. They also cover CSV validation and the command-line tool.
+JavaScript version of this tool, each of the 8 special-cause tests on hand-built patterns, the
+descriptive statistics and Cp/Cpk formulas. They also cover CSV validation, page rendering and the
+command-line tool.
 
 ---
 
@@ -217,3 +236,4 @@ JavaScript version of this tool. They also cover CSV validation and the command-
 
 - NIST/SEMATECH e-Handbook: [Individuals control charts](https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc322.htm)
 - NIST/SEMATECH e-Handbook: [Process capability](https://www.itl.nist.gov/div898/handbook/pmc/section1/pmc16.htm)
+- NIST/SEMATECH e-Handbook: [What are control charts? (run rules)](https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc32.htm)

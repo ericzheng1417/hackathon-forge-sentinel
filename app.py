@@ -104,8 +104,9 @@ app_ui = ui.page_bootstrap(
 # -- server ---------------------------------------------------------------
 
 CFG_FIELDS = [  # key, label, min, max, step
-    ("lsl", "Minimum strength (MPa)", 1, 2000, 0.1),
-    ("target", "Cpl target", 0.1, 5, 0.01),
+    ("lsl", "Lower spec · LSL (MPa)", 1, 2000, 0.1),
+    ("usl", "Upper spec · USL (MPa, 0 = none)", 0, 5000, 0.1),
+    ("target", "Cpk target", 0.1, 5, 0.01),
     ("baseline", "Baseline builds", 10, None, 1),
     ("oxygen", "Oxygen alert (ppm)", 1, 10000, 1),
     ("humidity", "Humidity alert (%)", 1, 100, 1),
@@ -133,7 +134,8 @@ def server(input, output, session):
     def _analysis(v: str) -> engine.Analysis:
         c, s = cfg(), stream()
         baseline = max(2, min(int(c["baseline"]), len(s) - 1))
-        return engine.analyze_stream(s, v, c["lsl"], baseline, c["target"])
+        return engine.analyze_stream(s, v, c["lsl"], baseline, c["target"], usl=c.get("usl") or None,
+                                     tests=c.get("tests", engine.ALL_TESTS), mr_rule=c.get("mr_rule", True))
 
     @reactive.calc
     def a() -> engine.Analysis:
@@ -157,9 +159,11 @@ def server(input, output, session):
     @render.ui
     def main():
         p, an = page(), a()
-        body = views.render_page(p, an, am() if p == "Process control" else an, cfg(), STORE.load())
+        uses_metric = p in ("Process control", "Statistics")
+        all_desc = {v: engine.describe([r[v] for r in stream()]) for v in engine.FIELDS} if p == "Statistics" else None
+        body = views.render_page(p, an, am() if uses_metric else an, cfg(), STORE.load(), all_desc)
         machines = data.machine_list(rows())
-        return ui.HTML(views.heading(p) + views.filters(machines, machine(), an) + body)
+        return ui.HTML(views.heading(p) + views.filters(machines, machine(), an, cfg().get("mr_rule", True)) + body)
 
     # ---- event dispatch ----
     @reactive.effect
@@ -220,13 +224,17 @@ def server(input, output, session):
     def show_config():
         cfg_err.set("")
         c, n = cfg(), len(stream())
-        fields = [ui.input_numeric(f"cfg_{k}", label, c[k], min=lo, max=(n - 1 if hi is None else hi), step=step)
+        fields = [ui.input_numeric(f"cfg_{k}", label, c.get(k) or 0, min=lo, max=(n - 1 if hi is None else hi), step=step)
                   for k, label, lo, hi, step in CFG_FIELDS]
+        test_choices = {str(t): f"{t} · {engine.SPECIAL_TESTS[t][0]}" for t in engine.ALL_TESTS}
         ui.modal_show(ui.modal(
             close_button(),
             ui.HTML('<h2>Analysis configuration</h2><p>Use approved client requirements. Defaults are illustrative, '
                     'not aerospace acceptance criteria.</p>'),
             ui.div(*fields, class_="formgrid"),
+            ui.input_checkbox_group("cfg_tests", "Tests for special causes (I chart)", test_choices,
+                                    selected=[str(t) for t in c.get("tests", engine.ALL_TESTS)]),
+            ui.input_checkbox("cfg_mr_rule", "Also flag moving ranges above the MR-chart UCL", c.get("mr_rule", True)),
             ui.output_ui("cfg_error"),
             ui.HTML('<button class="primary" style="background:var(--green);color:#fff;border:1px solid var(--green);'
                     'border-radius:6px;padding:10px 15px;margin-top:12px" onclick="fsEvt(\'apply_config\')">'
@@ -239,11 +247,19 @@ def server(input, output, session):
         nxt = dict(cfg())
         for k, label, lo, hi, _step in CFG_FIELDS:
             val = input[f"cfg_{k}"]()
+            if k == "usl" and val in (None, ""):
+                val = 0  # blank upper spec = one-sided specification
             hi = n - 1 if hi is None else hi
             if val is None or not isinstance(val, (int, float)) or not math.isfinite(val) or not lo <= val <= hi:
                 cfg_err.set(f"{label} must be between {lo} and {hi}.")
                 return
             nxt[k] = int(val) if k == "baseline" else float(val)
+        if nxt["usl"] and nxt["usl"] <= nxt["lsl"]:
+            cfg_err.set("USL must be greater than LSL, or 0 for a one-sided specification.")
+            return
+        nxt["usl"] = nxt["usl"] or None
+        nxt["tests"] = sorted(int(t) for t in (input["cfg_tests"]() or ()) if str(t).isdigit())
+        nxt["mr_rule"] = bool(input["cfg_mr_rule"]())
         if nxt["baseline"] != float(input["cfg_baseline"]()):
             cfg_err.set("Baseline builds must be a whole number.")
             return

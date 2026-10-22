@@ -34,9 +34,11 @@ class ParityWithOriginalJS(unittest.TestCase):
                 a = engine.analyze_stream(recs, case["v"], case["lsl"], case["bl"])
                 for k_js, val in [("mu", a.center), ("sig", a.sigma), ("lcl", a.lcl), ("ucl", a.ucl),
                                   ("avg", a.avg), ("s", a.overall_sd), ("cpl", a.cpl), ("ppl", a.ppl)]:
+                    if k_js in ("cpl", "ppl") and case["v"] != "strength":
+                        continue  # capability is only defined for strength (the spec'd characteristic)
                     self.assertTrue(close(case[k_js], val), (k_js, case[k_js], val))
                 self.assertEqual(case["fails"], len(a.fails))
-                self.assertEqual(case["flags"], [[f.index, f.reasons] for f in a.flags])
+                # Signals intentionally differ: the original used 3 rules, this version uses the 8 tests.
                 if case["v"] == "strength":
                     got = engine.associations(recs)
                     self.assertEqual([d["v"] for d in case["ranks"]], [d["v"] for d in got])
@@ -72,6 +74,86 @@ class Fixtures(unittest.TestCase):
             engine.analyze(recs)
 
 
+class EightTests(unittest.TestCase):
+    """Each rule on a hand-built series with centre 0 and sigma 1."""
+
+    def hits(self, x, test):
+        return sorted(i for i, ts in engine.special_cause_tests(x, 0.0, 1.0, [test]).items() if test in ts)
+
+    def test1_beyond_zone_a(self):
+        self.assertEqual(self.hits([0.1, -0.2, 3.5, 0.3, -3.1], 1), [2, 4])
+
+    def test2_two_of_three_beyond_b(self):
+        self.assertEqual(self.hits([0.1, 2.5, 0.2, 2.2], 2), [3])
+        self.assertEqual(self.hits([2.5, -2.5, 0.0], 2), [])          # opposite sides do not count
+
+    def test3_four_of_five_beyond_c(self):
+        self.assertEqual(self.hits([1.5, 1.2, 0.2, 1.1, 1.3], 3), [4])
+        self.assertEqual(self.hits([1.5, 1.2, 0.2, 1.1, 0.3], 3), [])
+
+    def test4_eight_same_side(self):
+        self.assertEqual(self.hits([0.1] * 7 + [-0.1], 4), [])
+        self.assertEqual(self.hits([0.1] * 9, 4), [7, 8])
+
+    def test5_six_trending(self):
+        self.assertEqual(self.hits([0, 0.1, 0.2, 0.3, 0.4, 0.5], 5), [5])
+        self.assertEqual(self.hits([0, 0.1, 0.2, 0.2, 0.4, 0.5], 5), [])   # a tie breaks the run
+
+    def test6_fifteen_in_zone_c(self):
+        x = [0.5, -0.5] * 7 + [0.2]
+        self.assertEqual(self.hits(x, 6), [14])
+        self.assertEqual(self.hits(x[:-1] + [1.5], 6), [])
+
+    def test7_eight_outside_zone_c_both_sides(self):
+        self.assertEqual(self.hits([1.5, -1.5] * 4, 7), [7])
+        self.assertEqual(self.hits([1.5] * 8, 7), [])                   # one side only is Test 4, not 7
+
+    def test8_fourteen_alternating(self):
+        x = [0.2, -0.2] * 7
+        self.assertEqual(self.hits(x, 8), [13])
+        self.assertEqual(self.hits(x[:13] + [x[12]], 8), [])
+
+    def test_mr_rule_and_test_selection(self):
+        recs = [{"id": str(i), "strength": 950.0 + (i % 2)} for i in range(30)] + [{"id": "j", "strength": 990.0}]
+        a = engine.analyze_stream(recs, tests=[], mr_rule=True)
+        self.assertEqual([f.tests for f in a.flags], [["MR"]])
+        a = engine.analyze_stream(recs, tests=[], mr_rule=False)
+        self.assertTrue(a.stable)
+
+
+class DescriptiveAndCapability(unittest.TestCase):
+    def test_describe(self):
+        d = engine.describe([2, 4, 4, 4, 5, 5, 7, 9])
+        self.assertEqual(d["mean"], 5)
+        self.assertEqual(d["median"], 4.5)
+        self.assertAlmostEqual(d["variance"], 32 / 7)
+        self.assertAlmostEqual(d["sd"], math.sqrt(32 / 7))
+        self.assertAlmostEqual(d["cv_pct"], math.sqrt(32 / 7) / 5 * 100)
+        self.assertAlmostEqual(d["se_mean"], math.sqrt(32 / 7) / math.sqrt(8))
+        self.assertEqual((d["min"], d["max"], d["range"]), (2, 9, 7))
+        self.assertEqual((d["q1"], d["q3"], d["iqr"]), (4, 5.5, 1.5))     # Excel QUARTILE.INC
+
+    def test_capability_two_sided(self):
+        c = engine.capability(mean=1000, sigma_within=10, sigma_overall=20, lsl=940, usl=1090)
+        self.assertAlmostEqual(c["Cp"], 150 / 60)
+        self.assertAlmostEqual(c["Cpl"], 2.0)
+        self.assertAlmostEqual(c["Cpu"], 3.0)
+        self.assertAlmostEqual(c["Cpk"], 2.0)
+        self.assertAlmostEqual(c["Pp"], 150 / 120)
+        self.assertAlmostEqual(c["Ppk"], 1.0)
+
+    def test_capability_one_sided(self):
+        c = engine.capability(mean=1000, sigma_within=10, sigma_overall=20, lsl=940, usl=None)
+        self.assertTrue(math.isnan(c["Cp"]))
+        self.assertAlmostEqual(c["Cpk"], c["Cpl"])
+
+    def test_usl_failures(self):
+        recs = [r for r in data.seed_rows() if r["machine"] == "LPBF-02"]
+        a = engine.analyze_stream(recs, usl=970)
+        self.assertTrue(all(r["strength"] > 970 or r["strength"] < 900 for r in a.fails))
+        self.assertGreater(len(a.fails), 0)
+
+
 class CSVImport(unittest.TestCase):
     def test_roundtrip(self):
         rows = data.seed_rows()
@@ -94,9 +176,26 @@ class Charts(unittest.TestCase):
     def test_svgs_render(self):
         recs = [r for r in data.seed_rows() if r["machine"] == "LPBF-01"]
         a = engine.analyze_stream(recs)
-        for svg in (charts.control_chart(a, 900), charts.histogram(a, 900), charts.scatter(a, 900)):
+        for svg in (charts.control_chart(a, 900, 1100), charts.histogram(a.x, "Strength", 900, 1100),
+                    charts.histogram(a.x, "Strength", bins=14), charts.mr_chart(a),
+                    charts.boxplot(a.x, a.desc, "Strength"), charts.scatter(a, 900)):
             self.assertIn("<svg", svg)
             self.assertNotIn("nan", svg.lower())
+
+
+class Views(unittest.TestCase):
+    def test_every_page_renders(self):
+        from forge_sentinel import views
+        recs = [r for r in data.seed_rows() if r["machine"] == "LPBF-01"]
+        cfg = dict(engine.DEFAULT_CONFIG)
+        all_desc = {v: engine.describe([r[v] for r in recs]) for v in engine.FIELDS}
+        for usl in (1100.0, None):
+            a = engine.analyze_stream(recs, "strength", 900, 25, 1.33, usl)
+            am = engine.analyze_stream(recs, "oxygen", 900, 25, 1.33, usl, tests=[1, 2, 4], mr_rule=False)
+            for p in views.PAGES:
+                html = views.render_page(p, a, am, cfg, {}, all_desc)
+                self.assertNotIn("nan", html.lower().replace("nancy", ""), p)
+                self.assertTrue(html)
 
 
 class CLI(unittest.TestCase):
