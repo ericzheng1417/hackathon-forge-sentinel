@@ -51,12 +51,13 @@ def build_context(stream: list[dict], cfg: dict, *, machine: str, source: str, a
     kw = dict(lsl=cfg["lsl"], baseline=int(cfg["baseline"]), target=cfg["target"], usl=cfg.get("usl") or None,
               tests=cfg.get("tests", engine.ALL_TESTS), mr_rule=cfg.get("mr_rule", True))
     a = engine.analyze_stream(stream, "strength", **kw)
-    avail = engine.available_vars(stream)
+    builds = engine.build_level(stream)
+    avail = engine.available_vars(builds)
     process = {v: engine.analyze_stream(stream, v, **kw) for v in avail if v != "strength"}
     return ReportContext(
         machine=machine, source=source, generated_at=generated_at, cfg=cfg, actions=actions, tasks=tasks, a=a,
-        process=process, desc={v: engine.describe([r.get(v) for r in stream]) for v in avail},
-        assoc=engine.associations(stream), wilson=engine.wilson(a.passes, a.n))
+        process=process, desc=engine.describe_all(stream),
+        assoc=engine.associations(builds), wilson=engine.wilson(a.passes, a.n))
 
 
 def json_report(ctx: ReportContext) -> str:
@@ -88,8 +89,25 @@ def key_metrics(ctx: ReportContext) -> list[tuple[str, str, str]]:
         ("Ppk", fmt(c["Ppk"]), "overall spread (includes any drift)"),
         ("Cp / Pp", f"{fmt(c['Cp'])} / {fmt(c['Pp'])}", "potential (spread only)" if a.usl is not None else "need USL"),
         ("Mean / median strength", f"{fmt(d['mean'], 1)} / {fmt(d['median'], 1)} MPa", ""),
-        ("SD / CV", f"{fmt(d['sd'], 2)} MPa / {fmt(d['cv_pct'], 2)}%", f"within (baseline) σ {fmt(a.sigma, 2)} MPa"),
+        ("SD / CV", f"{fmt(d['sd'], 2)} MPa / {fmt(d['cv_pct'], 2)}%", f"within σ {fmt(a.sigma, 2)} MPa ({a.cap_basis})"),
+        ("Control chart", "X̄-S (coupons per build)" if a.xs else "I-MR (one result per build)",
+         f"{len(a.values)} individual results" if a.xs else ""),
+        ("Normality (Anderson-Darling)", _pval(a.normal), "p ≥ 0.05: consistent with normal; p < 0.05: not normal"),
+        ("Expected out of spec (normal fit)", f"{_ppm(a.expected.get('overall', {}).get('total_ppm'))} ppm (overall s)",
+         f"{_ppm(a.expected.get('within', {}).get('total_ppm'))} ppm using within σ"),
     ]
+
+
+def _pval(nm: dict) -> str:
+    p = (nm or {}).get("p")
+    if not isinstance(p, float) or not math.isfinite(p):
+        return "—"
+    return ("p < 0.005" if p < 0.005 else f"p = {p:.3f}") + (" (normal)" if nm["normal"] else " (not normal)")
+
+
+def _ppm(v) -> str:
+    from .views import ppm
+    return ppm(v)
 
 
 def early_warnings(ctx: ReportContext) -> list[dict]:
@@ -221,8 +239,12 @@ def html_report(ctx: ReportContext) -> str:
         f'<tr class="{"" if t in a.tests else "off"}"><td><b>Test {t}</b></td><td>{esc(pat)}</td>'
         f'<td class="num">{(counts.get(t, 0) or "0") if t in a.tests else "off"}</td></tr>'
         for t, (_, pat, _sig) in SPECIAL_TESTS.items())
-    test_rows += (f'<tr class="{"" if cfg.get("mr_rule", True) else "off"}"><td><b>MR</b></td><td>Moving range above the MR-chart UCL</td>'
-                  f'<td class="num">{(counts.get("MR", 0) or "0") if cfg.get("mr_rule", True) else "off"}</td></tr>')
+    if a.xs:
+        test_rows += (f'<tr><td><b>S</b></td><td>Within-build SD outside the S-chart limits</td>'
+                      f'<td class="num">{counts.get("S", 0) or "0"}</td></tr>')
+    else:
+        test_rows += (f'<tr class="{"" if cfg.get("mr_rule", True) else "off"}"><td><b>MR</b></td><td>Moving range above the MR-chart UCL</td>'
+                      f'<td class="num">{(counts.get("MR", 0) or "0") if cfg.get("mr_rule", True) else "off"}</td></tr>')
 
     if a.flags:
         sig_rows = "".join(
@@ -234,7 +256,9 @@ def html_report(ctx: ReportContext) -> str:
     else:
         sig_html = '<p class="muted">No strength signals under the selected tests.</p>'
 
-    fail_html = ("".join(f'<tr><td>{esc(str(r["id"]))}</td><td class="num">{num(r["strength"])}</td>'
+    fail_html = ("".join(f'<tr><td>{esc(str(r["id"]))}</td><td class="num">{num(r["strength"])}'
+                         + (f' <span class="muted">(min {fmt(r["strength_min"], 1)})</span>' if r.get("n_coupons", 1) > 1 else "")
+                         + '</td>'
                          + "".join(f'<td class="num">{num(r.get(v))}</td>' for v in ctx.process)
                          + "</tr>" for r in a.fails))
     if a.fails:
@@ -257,6 +281,30 @@ def html_report(ctx: ReportContext) -> str:
         ("Cp", "(USL − LSL) / 6σ within"), ("Cpk", "min(Cpl, Cpu), within σ"), ("Cpl", "(mean − LSL) / 3σ"),
         ("Cpu", "(USL − mean) / 3σ"), ("Pp", "(USL − LSL) / 6s overall"), ("Ppk", "min(Ppl, Ppu), overall s")])
 
+    nm = a.normal or {}
+    exp_w, exp_o = a.expected.get("within", {}), a.expected.get("overall", {})
+    from .views import dist_curves
+    if a.xs:
+        chart_html = (f'{charts.xbar_chart(a)}<p class="note">Grand mean {fmt(a.xs.center, 1)} MPa · within-build σ̂ '
+                      f'({esc(a.xs.method)}) {fmt(a.xs.sigma, 2)} · X̄ limits x̿ ± 3σ̂/√n. Shaded = baseline. Red = signals.</p>'
+                      f'{charts.s_chart(a)}<p class="note">S chart: S̄ {fmt(a.xs.s_bar, 2)} · UCL {fmt(a.xs.s_ucl[0], 2)} · '
+                      f'LCL {fmt(a.xs.s_lcl[0], 2)}. A rising S means coupons on the same plate are drifting apart.</p>')
+        chart_title = "X̄-S chart"
+    else:
+        chart_html = (f'{charts.control_chart(a, a.lsl, a.usl)}'
+                      f'<p class="note">Centre {fmt(a.center, 1)} MPa · σ (MR̄/1.128) {fmt(a.sigma, 2)} · LCL {fmt(a.lcl, 1)} · '
+                      f'UCL {fmt(a.ucl, 1)}. Shaded area = baseline. Red points = special-cause signals.</p>'
+                      f'{charts.mr_chart(a)}<p class="note">Moving range: MR̄ {fmt(a.mr_bar, 2)} · UCL {fmt(a.mr_ucl, 1)}.</p>')
+        chart_title = "I-MR chart"
+    norm_html = (f'<table><tbody><tr><td>Anderson-Darling A² / A²*</td><td class="num">{fmt(nm.get("ad"), 3)} / {fmt(nm.get("ad_adj"), 3)}</td></tr>'
+                 f'<tr><td>p-value</td><td class="num">{_pval(nm)}</td></tr>'
+                 f'<tr><td>Expected out of spec, within σ</td><td class="num">{_ppm(exp_w.get("total_ppm"))} ppm</td></tr>'
+                 f'<tr><td>Expected out of spec, overall s</td><td class="num">{_ppm(exp_o.get("total_ppm"))} ppm</td></tr>'
+                 f'<tr><td>Observed out of spec</td><td class="num">{sum(1 for v in a.values if v < a.lsl or (a.usl is not None and v > a.usl))}'
+                 f' of {len(a.values)} {"coupons" if a.xs else "builds"}</td></tr></tbody></table>'
+                 + ('<p class="note"><b>Not normal:</b> treat the indices and ppm estimates with caution; rely on the observed '
+                    'failures and the charts.</p>' if nm.get("normal") is False else ""))
+
     action_rows = "".join(
         f'<tr><td><b>{esc(title)}</b><div class="note">{esc(owner)}</div></td>'
         f'<td>{esc(ctx.actions.get(tid, {}).get("status", STATUSES_DEFAULT))}</td>'
@@ -274,30 +322,28 @@ def html_report(ctx: ReportContext) -> str:
 <div class="muted" style="font-size:11px;letter-spacing:1.4px;font-weight:700">FORGE SENTINEL · PROCESS ASSURANCE REPORT</div>
 <h1>Ti-6Al-4V bracket strength — machine {esc(ctx.machine)}</h1>
 <div class="meta">
-<div>Data: <b>{esc(ctx.source_label)}</b></div><div>Builds: <b>{a.n}</b> (baseline first {a.baseline})</div><div>Generated: <b>{esc(ctx.generated_at)}</b></div>
-<div>Specification: <b>{_spec(a)}</b></div><div>Cpk target: <b>{num(cfg['target'])}</b></div><div>Tests: <b>{tests_on}{' + MR' if cfg.get('mr_rule', True) else ''}</b></div>
+<div>Data: <b>{esc(ctx.source_label)}</b></div><div>Builds: <b>{a.n}</b>{(" × " + str(a.xs.typical_n) + " coupons") if a.xs and a.xs.equal_n else ""} (baseline first {a.baseline})</div><div>Generated: <b>{esc(ctx.generated_at)}</b></div>
+<div>Specification: <b>{_spec(a)}</b></div><div>Cpk target: <b>{num(cfg['target'])}</b></div><div>Tests: <b>{tests_on}{' + S chart' if a.xs else (' + MR' if cfg.get('mr_rule', True) else '')}</b></div>
 </div>
 <div class="verdict {vcls}"><strong>{esc(verdict)}</strong>
 {len(a.post)} monitored builds with strength signals · {len(a.fails)} builds outside the {_spec(a)} specification ·
 {'baseline has signals; review before use' if a.baseflags else 'limits frozen from a signal-free baseline'}.</div>
 <div class="kpis">{kpis}</div>
 
-<section><h2>1. Strength stability (I-MR chart)</h2>
-{charts.control_chart(a, a.lsl, a.usl)}
-<p class="note">Centre {fmt(a.center, 1)} MPa · σ (MR̄/1.128) {fmt(a.sigma, 2)} · LCL {fmt(a.lcl, 1)} · UCL {fmt(a.ucl, 1)}.
-Shaded area = baseline. Red points = special-cause signals.</p>
-{charts.mr_chart(a)}
-<p class="note">Moving range: MR̄ {fmt(a.mr_bar, 2)} · UCL {fmt(a.mr_ucl, 1)}.</p></section>
+<section><h2>1. Strength stability ({chart_title})</h2>
+{chart_html}</section>
 
 <section><h2>2. Tests for special causes</h2>
 <table><thead><tr><th>Test</th><th>Pattern</th><th class="num">Points flagged</th></tr></thead><tbody>{test_rows}</tbody></table>
 <h3>Signal log (strength)</h3>{sig_html}</section>
 
 <section><h2>3. Capability</h2>
-<div class="two"><div>{charts.histogram(a.x, "Strength (MPa)", a.lsl, a.usl, width=500)}</div>
-<div><table><thead><tr><th>Index</th><th class="num">Value</th><th>Definition</th></tr></thead><tbody>{cap_rows}</tbody></table>
-<p class="note">Cp/Cpk use within (baseline) σ = {fmt(a.sigma, 2)}; Pp/Ppk use overall s = {fmt(a.overall_sd, 2)} MPa.
-Indices are meaningful only for a stable process.</p></div></div>
+{charts.histogram(a.values, "Strength (MPa)", a.lsl, a.usl, bins=36, width=760, curves=dist_curves(a))}
+<div class="two"><div><table><thead><tr><th>Index</th><th class="num">Value</th><th>Definition</th></tr></thead><tbody>{cap_rows}</tbody></table>
+<p class="note">Cp/Cpk use within σ = {fmt(a.sigma, 2)} ({esc(a.cap_basis)}); Pp/Ppk use overall s = {fmt(a.overall_sd, 2)} MPa.
+Indices are meaningful only for a stable, approximately normal process.</p></div>
+<div><h3 style="margin-top:0">Distribution check</h3>{norm_html}</div></div>
+{charts.qq_plot(a.values, "Strength", a.normal)}
 <h3>Out-of-specification builds</h3>{fail_html}</section>
 
 <section><h2>4. Where to look: process variables</h2>
@@ -311,8 +357,9 @@ Indices are meaningful only for a stable process.</p></div></div>
 <table><thead><tr><th>Action</th><th>Status</th><th>Notes</th><th>Updated</th></tr></thead><tbody>{action_rows}</tbody></table></section>
 
 <section><h2>7. Method and limitations</h2>
-<p>Individuals and moving-range chart with limits frozen from the first {a.baseline} builds; the 8 Western Electric / Nelson
-tests plus a moving-range rule; capability per NIST/SEMATECH definitions; 95% Wilson score interval for the pass rate;
+<p>{"X̄ and S charts (one subgroup = one build's coupons)" if a.xs else "Individuals and moving-range chart"} with limits frozen from the first {a.baseline} builds; the 8 Western Electric / Nelson
+tests {"plus an S-chart limit check" if a.xs else "plus a moving-range rule"}; capability per NIST/SEMATECH definitions; Anderson-Darling normality test
+and normal-theory ppm estimates; 95% Wilson score interval for the pass rate;
 Pearson correlation on pairwise-complete records. Full formulas: <i>docs/REFERENCE.md</i>.</p>
 <p class="note">Decision support only. This report does not certify parts, qualify the process, or estimate fatigue life.
 Specification limits and targets shown are the values configured in the tool; confirm them against the contract or drawing.</p>
@@ -358,18 +405,25 @@ def excel_report(ctx: ReportContext) -> bytes:
     data_ws.title = "Data"
     flagged = {f.index: f for f in a.flags}
     pvars = list(ctx.process)
-    headers = (["Seq", "Build ID", "Machine", "Strength (MPa)"] + [f"{VARS[v][0]} ({VARS[v][1]})" for v in pvars]
+    xs = a.xs
+    extra = ["Coupons", "Coupon SD", "Lowest coupon"] if xs else []
+    headers = (["Seq", "Build ID", "Machine", "Mean strength (MPa)" if xs else "Strength (MPa)"] + extra
+               + [f"{VARS[v][0]} ({VARS[v][1]})" for v in pvars]
                + ["Centre", "UCL", "LCL", "LSL"] + (["USL"] if a.usl is not None else [])
-               + ["Moving range", "Result", "Phase", "Strength signals"])
+               + (["S", "S UCL"] if xs else ["Moving range"]) + ["Result", "Phase", "Strength signals"])
     rows = []
     for i, r in enumerate(a.records):
         f = flagged.get(i)
-        rows.append([i + 1, r["id"], r["machine"], r["strength"]] + [r.get(v) for v in pvars]
-                    + [a.center, a.ucl, a.lcl, a.lsl] + ([a.usl] if a.usl is not None else [])
-                    + [a.mr[i], "FAIL" if a.is_fail(r) else "PASS", "baseline" if i < a.baseline else "monitoring",
+        limits = [xs.center, xs.x_ucl[i], xs.x_lcl[i]] if xs else [a.center, a.ucl, a.lcl]
+        rows.append([i + 1, r["id"], r["machine"], r["strength"]]
+                    + ([r.get("n_coupons"), r.get("strength_sd"), r.get("strength_min")] if xs else [])
+                    + [r.get(v) for v in pvars]
+                    + limits + [a.lsl] + ([a.usl] if a.usl is not None else [])
+                    + ([xs.sds[i], xs.s_ucl[i]] if xs else [a.mr[i]])
+                    + ["FAIL" if a.is_fail(r) else "PASS", "baseline" if i < a.baseline else "monitoring",
                        "; ".join(f.reasons) if f else ""])
-    table(data_ws, 1, headers, rows, [6, 11, 10, 14] + [14] * len(pvars) + [10, 10, 10, 8] + ([8] if a.usl is not None else [])
-          + [12, 8, 11, 48], numfmt="0.0")
+    table(data_ws, 1, headers, rows, [6, 11, 10, 14] + [10, 11, 13][:len(extra)] + [14] * len(pvars) + [10, 10, 10, 8]
+          + ([8] if a.usl is not None else []) + ([9, 9] if xs else [12]) + [8, 11, 48], numfmt="0.0")
     res_col = headers.index("Result") + 1
     for i, r in enumerate(a.records, start=2):
         if a.is_fail(r):
@@ -397,21 +451,21 @@ def excel_report(ctx: ReportContext) -> bytes:
         for cell in row:
             cell.alignment = Alignment(wrap_text=True, vertical="top")
     chart = LineChart()
-    chart.title = "Strength individuals chart"
+    chart.title = "X̄ chart: mean strength per build" if xs else "Strength individuals chart"
     chart.y_axis.title, chart.x_axis.title = "MPa", "Build sequence"
     chart.height, chart.width = 9, 22
     chart.x_axis.delete = False          # recent Excel versions hide axes unless this is explicit
     chart.y_axis.delete = False
     chart.y_axis.number_format = "0"
     chart.x_axis.tickLblSkip = 5
-    first_ctrl = 5 + len(pvars)          # Centre, UCL, LCL, LSL columns in the Data sheet
+    first_ctrl = 5 + len(extra) + len(pvars)   # Centre, UCL, LCL, LSL columns in the Data sheet
     n_rows = len(rows) + 1
     chart.add_data(Reference(data_ws, min_col=4, min_row=1, max_row=n_rows), titles_from_data=True)
-    chart.add_data(Reference(data_ws, min_col=first_ctrl, max_col=first_ctrl + 3, min_row=1, max_row=n_rows),
-                   titles_from_data=True)
+    chart.add_data(Reference(data_ws, min_col=first_ctrl, max_col=first_ctrl + (2 if xs else 3), min_row=1, max_row=n_rows),
+                   titles_from_data=True)   # spec limits apply to coupons, so the X̄ chart omits LSL
     chart.set_categories(Reference(data_ws, min_col=1, min_row=2, max_row=n_rows))
-    lo = min(*a.x, a.lcl, a.lsl) - 10
-    hi = max(*a.x, a.ucl) + 10
+    lo = min(*a.x, *(xs.x_lcl if xs else [a.lcl]), *([] if xs else [a.lsl])) - 10
+    hi = max(*a.x, *(xs.x_ucl if xs else [a.ucl])) + 10
     chart.y_axis.scaling.min, chart.y_axis.scaling.max = math.floor(lo / 10) * 10, math.ceil(hi / 10) * 10
     colours = ["427E6D", "5B9685", "A1B4AC", "A1B4AC", "C36A57"]
     for s, col in zip(chart.series, colours):
@@ -440,8 +494,15 @@ def excel_report(ctx: ReportContext) -> bytes:
         ["Pp", c["Pp"], "(USL − LSL) / 6s overall"], ["Ppk", c["Ppk"], "min(Ppl, Ppu)"],
         ["Ppl", c["Ppl"], "(mean − LSL) / 3s overall"], ["Ppu", c["Ppu"], "(USL − mean) / 3s overall"]], [12, 10, 34])
     p, lo_w, hi_w = ctx.wilson
+    nm = a.normal or {}
+    exp_w, exp_o = a.expected.get("within", {}), a.expected.get("overall", {})
     table(cap_ws, nxt, ["Quantity", "Value"], [
-        ["Mean (MPa)", a.avg], ["Within σ = MR̄/1.128 (MPa)", a.sigma], ["Overall s (MPa)", a.overall_sd],
+        ["Mean (MPa)", a.avg], [f"Within σ ({a.cap_basis}) (MPa)", a.sigma], ["Overall s (MPa)", a.overall_sd],
+        ["Individual results", len(a.values)],
+        ["Anderson-Darling A²", nm.get("ad")], ["Anderson-Darling p-value", nm.get("p")],
+        ["Normal (p ≥ 0.05)", {True: "yes", False: "no"}.get(nm.get("normal"), "n/a")],
+        ["Expected out of spec, within σ (ppm)", exp_w.get("total_ppm")],
+        ["Expected out of spec, overall s (ppm)", exp_o.get("total_ppm")],
         ["LSL (MPa)", a.lsl], ["USL (MPa)", a.usl], ["Pass rate", p], ["Wilson 95% low", lo_w], ["Wilson 95% high", hi_w],
         ["Out-of-spec builds", len(a.fails)]], numfmt="0.000")
 
@@ -458,6 +519,21 @@ def excel_report(ctx: ReportContext) -> bytes:
     table(sg_ws, nxt, ["Test (strength)", "Pattern", "Points flagged"],
           [[f"Test {t}", SPECIAL_TESTS[t][1], counts.get(t, 0) if t in a.tests else "off"] for t in SPECIAL_TESTS]
           + [["MR", engine.MR_RULE_TEXT, counts.get("MR", 0) if cfg.get("mr_rule", True) else "off"]])
+
+    # --- Coupons (coupon-level data only) ---
+    if xs:
+        cp_ws = wb.create_sheet("Coupons")
+        cp_rows = []
+        for i, r in enumerate(a.records):
+            for lab, v in r.get("coupons") or []:
+                cp_rows.append([i + 1, r["id"], lab, v,
+                                "FAIL" if v < a.lsl or (a.usl is not None and v > a.usl) else "PASS"])
+        table(cp_ws, 1, ["Seq", "Build ID", "Coupon", "Strength (MPa)", "Result"], cp_rows, [6, 11, 9, 14, 8], numfmt="0.0")
+        for k, row in enumerate(cp_rows, start=2):
+            if row[4] == "FAIL":
+                cp_ws.cell(row=k, column=5).fill = red_fill
+        cp_ws.freeze_panes = "A2"
+        cp_ws.auto_filter.ref = f"A1:E{len(cp_rows) + 1}"
 
     # --- Associations ---
     as_ws = wb.create_sheet("Associations")

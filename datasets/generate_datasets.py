@@ -31,10 +31,12 @@ NOMINAL = {
     "speed": (1200.0, 15.0),      # scan speed, mm/s
     "stress": (135.0, 12.0),      # residual stress, MPa
 }
-# Seeds were chosen (by scanning seeds 1–3000 / 1–5000) so each scenario tells a clean story:
+# Seeds were chosen (by scanning candidate seeds) so each scenario tells a clean story:
 # no strength false alarms in the stable file, and no signals before the leak or after the repair
-# in the drift file. See datasets/README.md.
-SEEDS = {"stable": 231, "drift": 2570, "minimal": 20263}
+# in the drift file; in the coupon file the S chart flags before the X̄ chart. See datasets/README.md.
+SEEDS = {"stable": 231, "drift": 2570, "minimal": 20263, "coupons": 1367}
+COUPON_COLUMNS = ["id", "machine", "coupon", "build_date", "strength", "oxygen", "humidity", "temperature", "power",
+                  "speed", "stress"]
 
 
 def r1(v: float) -> float:
@@ -131,11 +133,32 @@ def write_xlsx(name: str, csv_path: pathlib.Path) -> pathlib.Path | None:
     return path
 
 
+def coupon_spread() -> list[dict]:
+    """Four tensile coupons per build at plate positions P1–P4 (one row per coupon).
+
+    From build 26 the argon gas flow across the plate degrades (e.g. a partly blocked
+    nozzle): coupons far from the inlet (P4, and P3 less so) lose strength each build,
+    so the spread within a build grows much faster than the build mean falls."""
+    rng = random.Random(SEEDS["coupons"])
+    rows = []
+    for i, day in enumerate(dates(40, dt.date(2026, 8, 1))):
+        n = i + 1
+        b = nominal_build(rng)                       # build-level conditions, shared by the 4 coupons
+        build_effect = rng.gauss(0, 1.5)             # small build-to-build variation of the mean
+        k = max(0, n - 25)
+        for pos, drop in (("P1", 0.0), ("P2", 0.0), ("P3", 1.5 * k), ("P4", 4.5 * k)):
+            strength = 968 + build_effect + rng.gauss(0, 7) - drop
+            rows.append({"id": f"E-{n:03d}", "machine": "LPBF-E", "coupon": pos, "build_date": day,
+                         **{v: b[v] for v in NOMINAL if v != "strength"}, "strength": strength})
+    return rows
+
+
 def main():
     written = [
         write("01_stable_capable.csv", stable_capable(), FULL_COLUMNS),
         write("02_oxygen_drift.csv", oxygen_drift(), FULL_COLUMNS),
         write("03_strength_only.csv", strength_only(), ["id", "machine", "strength"]),
+        write("04_coupon_spread.csv", coupon_spread(), COUPON_COLUMNS),
     ]
     xlsx = write_xlsx("02_oxygen_drift.xlsx", OUT / "02_oxygen_drift.csv")
     if xlsx:

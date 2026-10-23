@@ -7,7 +7,9 @@ Contents
 - Descriptive statistics (mean, median, SD, variance, CV, SE, range, quartiles, IQR)
 - Individuals (I) and moving-range (MR) control charts with baseline-frozen limits
 - The 8 standard tests for special causes (Western Electric / Nelson rules)
+- X̄ and S charts when several test coupons are recorded per build (subgroups)
 - Capability and performance indices: Cp, Cpk, Cpl, Cpu, Pp, Ppk, Ppl, Ppu
+- Distribution checks: Anderson-Darling normality test, normal Q-Q points, expected ppm out of spec
 - Wilson score interval for the observed pass rate, Pearson correlations, JSON report
 """
 from __future__ import annotations
@@ -27,7 +29,7 @@ VARS: dict[str, tuple[str, str]] = {
     "stress": ("Residual stress", "MPa"),
 }
 FIELDS = tuple(VARS)
-COLUMNS = ("id", "machine", *FIELDS)
+COLUMNS = ("id", "machine", "coupon", *FIELDS)   # coupon: optional, one row per tensile coupon
 REQUIRED_COLUMNS = ("id", "machine", "strength")          # the only inputs a contractor must supply
 OPTIONAL_FIELDS = tuple(v for v in FIELDS if v != "strength")
 MIN_VALUES = 10   # a variable needs at least this many recorded values to be charted or correlated
@@ -115,6 +117,182 @@ def describe(values: list) -> dict:
     }
 
 
+# -- distribution / normality ----------------------------------------------
+
+def anderson_darling(values: list) -> dict:
+    """Anderson-Darling test for normality (mean and SD estimated from the data).
+
+    A² = −n − (1/n) Σ (2i − 1) [ln F(x₍ᵢ₎) + ln(1 − F(x₍ₙ₊₁₋ᵢ₎))], with F the fitted normal CDF;
+    A²* = A² (1 + 0.75/n + 2.25/n²); p-value from D'Agostino & Stephens (1986). Returns
+    {"n", "ad", "ad_adj", "p", "normal"} where normal = p ≥ 0.05 (NaN/None if n < 8 or SD = 0).
+    """
+    x = sorted(float(v) for v in values if present(v))
+    n = len(x)
+    empty = {"n": n, "ad": math.nan, "ad_adj": math.nan, "p": math.nan, "normal": None}
+    if n < 8:
+        return empty
+    m, sd = st.fmean(x), st.stdev(x)
+    if sd == 0:
+        return empty
+    nd = st.NormalDist(m, sd)
+    f = [min(max(nd.cdf(v), 1e-15), 1 - 1e-15) for v in x]
+    a2 = -n - sum((2 * i - 1) * (math.log(f[i - 1]) + math.log(1 - f[n - i])) for i in range(1, n + 1)) / n
+    a = a2 * (1 + 0.75 / n + 2.25 / n ** 2)
+    if a >= 0.6:
+        p = math.exp(1.2937 - 5.709 * a + 0.0186 * a * a)
+    elif a >= 0.34:
+        p = math.exp(0.9177 - 4.279 * a - 1.38 * a * a)
+    elif a >= 0.2:
+        p = 1 - math.exp(-8.318 + 42.796 * a - 59.938 * a * a)
+    else:
+        p = 1 - math.exp(-13.436 + 101.14 * a - 223.73 * a * a)
+    p = min(max(p, 0.0), 1.0)
+    return {"n": n, "ad": a2, "ad_adj": a, "p": p, "normal": p >= 0.05}
+
+
+def normal_quantiles(n: int) -> list[float]:
+    """Theoretical standard-normal quantiles for a Q-Q plot (Blom: (i − 0.375) / (n + 0.25))."""
+    z = st.NormalDist()
+    return [z.inv_cdf((i - 0.375) / (n + 0.25)) for i in range(1, n + 1)]
+
+
+def expected_out_of_spec(mean: float, sigma: float, lsl: float | None, usl: float | None) -> dict:
+    """Fraction of parts a normal distribution N(mean, sigma) puts outside the limits, in ppm."""
+    if not (_finite(mean) and _finite(sigma) and sigma > 0):
+        return {"below_ppm": math.nan, "above_ppm": math.nan, "total_ppm": math.nan}
+    nd = st.NormalDist(mean, sigma)
+    below = nd.cdf(lsl) * 1e6 if lsl is not None else 0.0
+    above = (1 - nd.cdf(usl)) * 1e6 if usl is not None else 0.0
+    return {"below_ppm": below, "above_ppm": above, "total_ppm": below + above}
+
+
+# -- subgroups (several coupons per build) ----------------------------------
+
+def has_coupons(records: list[dict]) -> bool:
+    """True if any row carries a coupon label (coupon-level data)."""
+    return any(present(r.get("coupon")) for r in records)
+
+
+def build_level(records: list[dict]) -> list[dict]:
+    """One row per build. Without a coupon column the rows are returned unchanged.
+
+    With coupons, rows sharing (machine, id) are combined in first-seen order:
+    strength = mean of the coupons; each process variable = mean of its recorded values;
+    plus "coupons" [(label, strength)], "n_coupons", "strength_sd", "strength_min", "strength_max".
+    """
+    if not has_coupons(records):
+        return records
+    groups: dict = {}
+    for r in records:
+        groups.setdefault((r["machine"], r["id"]), []).append(r)
+    out = []
+    for (machine, bid), rows in groups.items():
+        vals = [float(r["strength"]) for r in rows if present(r.get("strength"))]
+        b = {"id": bid, "machine": machine, "coupon": None,
+             "strength": st.fmean(vals) if vals else None,
+             "coupons": [(r.get("coupon"), float(r["strength"])) for r in rows if present(r.get("strength"))],
+             "n_coupons": len(vals),
+             "strength_sd": st.stdev(vals) if len(vals) > 1 else None,
+             "strength_min": min(vals) if vals else None, "strength_max": max(vals) if vals else None}
+        for v in OPTIONAL_FIELDS:
+            pv = [float(r[v]) for r in rows if present(r.get(v))]
+            b[v] = st.fmean(pv) if pv else None
+        out.append(b)
+    return out
+
+
+def c4(n: int) -> float:
+    """Unbiasing constant for the sample SD: E[s] = c4·σ for subgroups of size n."""
+    return math.sqrt(2 / (n - 1)) * math.exp(math.lgamma(n / 2) - math.lgamma((n - 1) / 2))
+
+
+def xbar_s_constants(n: int) -> dict:
+    """Classic table constants (A3, B3, B4, c4) for subgroup size n — for reference and tests."""
+    c = c4(n)
+    w = 3 * math.sqrt(1 - c * c) / c
+    return {"c4": c, "A3": 3 / (c * math.sqrt(n)), "B3": max(0.0, 1 - w), "B4": 1 + w}
+
+
+@dataclass
+class XbarS:
+    """X̄ and S chart for one machine (one subgroup = one build's coupons)."""
+    ids: list
+    n: list[int]                  # coupons per build
+    means: list[float]
+    sds: list                     # None where n < 2
+    baseline: int
+    center: float                 # grand mean of the baseline coupons
+    sigma: float                  # within-build σ̂ (s̄/c4 for equal n; pooled s / c4(d) otherwise)
+    s_bar: float
+    x_lcl: list[float]
+    x_ucl: list[float]
+    s_center: list
+    s_lcl: list
+    s_ucl: list
+    method: str
+    x_hits: dict = field(default_factory=dict)   # index -> [test numbers]
+    s_hits: dict = field(default_factory=dict)   # index -> "above" / "below"
+
+    @property
+    def equal_n(self) -> bool:
+        return len(set(self.n)) == 1
+
+    @property
+    def typical_n(self) -> int:
+        return max(set(self.n), key=self.n.count)
+
+
+def xbar_s(builds: list[dict], baseline: int, tests=ALL_TESTS) -> XbarS:
+    """X̄-S chart from build-level rows (output of build_level) with frozen baseline limits.
+
+    σ̂ within: s̄ / c4(n) when every baseline build has the same number of coupons, otherwise
+    the pooled SD / c4(d), d = Σ(nᵢ − 1) + 1. Limits for build i with nᵢ coupons:
+      X̄: x̿ ± 3σ̂/√nᵢ   (= x̿ ± A3·s̄ for equal n)
+      S: c4(nᵢ)σ̂ ± 3σ̂√(1 − c4(nᵢ)²), lower limit floored at 0   (= B3·s̄, B4·s̄)
+    The 8 tests run on standardised means zᵢ = (x̄ᵢ − x̿) / (σ̂/√nᵢ); an S value outside its
+    limits is flagged as "S".
+    """
+    groups = [[v for _, v in b["coupons"]] if b.get("coupons") else [float(b["strength"])] for b in builds]
+    sizes = [len(g) for g in groups]
+    means = [st.fmean(g) for g in groups]
+    sds = [st.stdev(g) if len(g) > 1 else None for g in groups]
+    base = groups[:baseline]
+    multi = [g for g in base if len(g) > 1]
+    if len(multi) < 2:
+        raise ValueError("X̄-S charts need at least 2 baseline builds with 2 or more coupons")
+    center = sum(sum(g) for g in base) / sum(len(g) for g in base)
+    base_sizes = {len(g) for g in base}
+    if len(base_sizes) == 1:
+        nn = base_sizes.pop()
+        s_bar = st.fmean(st.stdev(g) for g in base)
+        sigma, method = s_bar / c4(nn), f"s̄ / c4({nn})"
+    else:
+        dof = sum(len(g) - 1 for g in multi)
+        sp = math.sqrt(sum((len(g) - 1) * st.variance(g) for g in multi) / dof)
+        s_bar, sigma, method = sp, sp / c4(dof + 1), f"pooled s / c4({dof + 1})"
+    x_lcl = [center - 3 * sigma / math.sqrt(k) for k in sizes]
+    x_ucl = [center + 3 * sigma / math.sqrt(k) for k in sizes]
+    s_center, s_lcl, s_ucl = [], [], []
+    for k in sizes:
+        if k < 2:
+            s_center.append(None), s_lcl.append(None), s_ucl.append(None)
+            continue
+        c, w = c4(k) * sigma, 3 * sigma * math.sqrt(1 - c4(k) ** 2)
+        s_center.append(c), s_lcl.append(max(0.0, c - w)), s_ucl.append(c + w)
+    xs = XbarS([b["id"] for b in builds], sizes, means, sds, baseline, center, sigma, s_bar, x_lcl, x_ucl,
+               s_center, s_lcl, s_ucl, method)
+    if sigma > 0:
+        z = [(m - center) / (sigma / math.sqrt(k)) for m, k in zip(means, sizes)]
+        xs.x_hits = special_cause_tests(z, 0.0, 1.0, tests)
+        for i, sd in enumerate(sds):
+            if sd is not None and s_ucl[i] is not None:
+                if sd > s_ucl[i]:
+                    xs.s_hits[i] = "above"
+                elif s_lcl[i] > 0 and sd < s_lcl[i]:
+                    xs.s_hits[i] = "below"
+    return xs
+
+
 # -- control-chart tests ---------------------------------------------------
 
 def special_cause_tests(x: list[float], center: float, sigma: float,
@@ -199,7 +377,7 @@ def capability(mean: float, sigma_within: float, sigma_overall: float, lsl: floa
 @dataclass
 class Signal:
     index: int
-    tests: list          # test numbers (1-8) and/or "MR"
+    tests: list          # test numbers (1-8) and/or "MR" (moving range) / "S" (S chart)
     reasons: list[str]
 
 
@@ -230,6 +408,16 @@ class Analysis:
     fails: list[dict] = field(default_factory=list)
     idx: list[int] = field(default_factory=list)
     n_missing: int = 0
+    values: list = field(default_factory=list)     # individual observations (coupons if subgrouped)
+    value_idx: list = field(default_factory=list)  # build position (in `records`) of each value
+    normal: dict = field(default_factory=dict)     # anderson_darling(values)
+    expected: dict = field(default_factory=dict)   # {"within": ppm dict, "overall": ppm dict} (strength only)
+    xs: XbarS | None = None                        # X̄-S chart when strength has coupon subgroups
+    cap_basis: str = "MR̄ / 1.128"                  # how within σ was estimated for Cp/Cpk
+
+    @property
+    def chart(self) -> str:
+        return "Xbar-S" if self.xs else "I-MR"
 
     @property
     def n(self) -> int:
@@ -268,11 +456,15 @@ class Analysis:
         return self.n - len(self.fails)
 
     def is_fail(self, r: dict) -> bool:
-        s = float(r["strength"])
-        return s < self.lsl or (self.usl is not None and s > self.usl)
+        """A build fails if its strength (or, with coupons, any coupon) is outside the specification."""
+        lo = r.get("strength_min", r["strength"])
+        hi = r.get("strength_max", r["strength"])
+        lo = float(lo if lo is not None else r["strength"])
+        hi = float(hi if hi is not None else r["strength"])
+        return lo < self.lsl or (self.usl is not None and hi > self.usl)
 
     def test_counts(self) -> dict:
-        counts = {t: 0 for t in (*self.tests, "MR")}
+        counts = {t: 0 for t in (*self.tests, "S" if self.xs else "MR")}
         for f in self.flags:
             for t in f.tests:
                 counts[t] = counts.get(t, 0) + 1
@@ -286,10 +478,13 @@ def _reason(t) -> str:
 def analyze_stream(records: list[dict], metric: str = "strength", lsl: float = 900, baseline: int = 25,
                    target: float = 1.33, usl: float | None = None, tests=ALL_TESTS,
                    mr_rule: bool = True) -> Analysis:
-    """I-MR SPC for one ordered machine stream, plus strength capability and descriptives.
+    """SPC for one ordered machine stream, plus strength capability, descriptives and normality.
 
     records  : rows for ONE machine in build order; each needs id and strength, other
-               variables are optional (None/blank rows are skipped for that metric only)
+               variables are optional (None/blank rows are skipped for that metric only).
+               Coupon-level rows (a coupon column, several rows per build) are combined with
+               build_level(); for strength the X̄-S chart then replaces I-MR, and Cp/Cpk use
+               the within-build σ̂ from xbar_s().
     metric   : variable to chart (a key of VARS)
     lsl, usl : strength specification limits in MPa (usl=None → one-sided)
     baseline : number of initial builds that freeze the centre line and limits
@@ -300,6 +495,9 @@ def analyze_stream(records: list[dict], metric: str = "strength", lsl: float = 9
     """
     if metric not in VARS:
         raise ValueError(f"Unknown metric {metric!r}")
+    coupon_rows = records
+    records = build_level(records)
+    subgrouped = records is not coupon_rows and any(r.get("n_coupons", 1) > 1 for r in records)
     full = records
     idx = [i for i, r in enumerate(full) if present(r.get(metric))]
     records = [full[i] for i in idx]
@@ -335,8 +533,50 @@ def analyze_stream(records: list[dict], metric: str = "strength", lsl: float = 9
     cap = capability(st.fmean(s), s_center_sigma, st.stdev(s) if len(s) > 1 else math.nan, lsl, usl)
     a = Analysis(records, metric, x, baseline, center, mr_bar, sigma, lcl, ucl, flags, avg, overall, lsl,
                  target, usl, tests, mr, mr_ucl, cap, describe(x), idx=idx, n_missing=len(full) - len(records))
+    a.values = x
+    a.value_idx = list(range(len(x)))
+    if metric == "strength" and subgrouped:
+        _apply_subgroups(a, coupon_rows, tests)
+    a.normal = anderson_darling(a.values)
+    if metric == "strength":
+        a.expected = {"within": expected_out_of_spec(st.fmean(a.values), a.sigma if not a.xs else a.xs.sigma, lsl, usl),
+                      "overall": expected_out_of_spec(st.fmean(a.values), st.stdev(a.values), lsl, usl)}
     a.fails = [r for r in records if a.is_fail(r)]
     return a
+
+
+def _apply_subgroups(a: Analysis, coupon_rows: list[dict], tests) -> None:
+    """Switch a strength Analysis to the X̄-S chart and coupon-level capability."""
+    xs = xbar_s(a.records, a.baseline, tests)
+    a.xs = xs
+    hits: dict = {i: list(ts) for i, ts in xs.x_hits.items()}
+    for i in xs.s_hits:
+        hits.setdefault(i, []).append("S")
+    a.flags = [Signal(i, ts, [(f"S chart: within-build SD {'above UCL' if xs.s_hits[i] == 'above' else 'below LCL'}"
+                               if t == "S" else _reason(t)) for t in ts]) for i, ts in sorted(hits.items())]
+    a.center = xs.center
+    a.sigma = xs.sigma
+    a.lcl, a.ucl = xs.x_lcl[0], xs.x_ucl[0]
+    pos = {(r["machine"], r["id"]): i for i, r in enumerate(a.records)}
+    used = [r for r in coupon_rows if present(r.get("strength"))]
+    vals = [float(r["strength"]) for r in used]
+    a.values = vals
+    a.value_idx = [pos[(r["machine"], r["id"])] for r in used]
+    a.desc = describe(vals)
+    a.avg, a.overall_sd = st.fmean(vals), st.stdev(vals)
+    a.cap = capability(a.avg, xs.sigma, a.overall_sd, a.lsl, a.usl)
+    a.cap_basis = f"within-build σ̂ = {xs.method}"
+
+
+def describe_all(stream: list[dict]) -> dict:
+    """describe() for every recorded variable of one machine: strength over all individual
+    results (every coupon), process variables over builds (one value per build)."""
+    builds = build_level(stream)
+    out = {}
+    for v in available_vars(builds):
+        src = stream if v == "strength" else builds
+        out[v] = describe([r.get(v) for r in src])
+    return out
 
 
 def wilson(successes: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
@@ -405,10 +645,18 @@ def report(a: Analysis, *, source: str, machine: str, config: dict, actions: dic
         "statistics": {"n": a.n, "mean": a.avg, "baseline_mean": a.center, "baseline_sigma": a.sigma,
                        "overall_sd": a.overall_sd, "Cpl": a.cpl, "Ppl": a.ppl,
                        "failed_strength_tests": len(a.fails)},
-        "descriptive": {v: describe([r.get(v) for r in a.records]) for v in available_vars(a.records)},
+        "descriptive": {v: describe([r.get(v) for r in a.records]) for v in available_vars(a.records)}
+        | ({"strength": a.desc} if a.xs else {}),
         "capability": a.cap,
-        "control_chart": {"center": a.center, "sigma": a.sigma, "lcl": a.lcl, "ucl": a.ucl,
-                          "mr_bar": a.mr_bar, "mr_ucl": a.mr_ucl, "tests_applied": list(a.tests)},
+        "capability_basis": a.cap_basis,
+        "normality": a.normal,
+        "expected_out_of_spec_ppm": a.expected,
+        "control_chart": ({"type": "I-MR", "center": a.center, "sigma": a.sigma, "lcl": a.lcl, "ucl": a.ucl,
+                           "mr_bar": a.mr_bar, "mr_ucl": a.mr_ucl, "tests_applied": list(a.tests)} if not a.xs else
+                          {"type": "Xbar-S", "center": a.xs.center, "sigma_within": a.xs.sigma, "s_bar": a.xs.s_bar,
+                           "sigma_method": a.xs.method, "subgroup_sizes": a.xs.n, "xbar_lcl": a.xs.x_lcl,
+                           "xbar_ucl": a.xs.x_ucl, "s_lcl": a.xs.s_lcl, "s_ucl": a.xs.s_ucl,
+                           "tests_applied": list(a.tests) + ["S"]}),
         "signals": _signals_json(a),
         "associations": associations(a.records),
         "corrective_actions": actions,
@@ -421,7 +669,7 @@ def report(a: Analysis, *, source: str, machine: str, config: dict, actions: dic
 def analyze(records: list[dict], lsl: float = 900, baseline: int = 25, target: float = 1.33,
             usl: float | None = None, tests=ALL_TESTS, mr_rule: bool = True) -> dict:
     """CLI report. Keeps the original keys and adds Cp/Cpk, descriptives and test numbers."""
-    if not 10 <= baseline < len(records):
+    if not 10 <= baseline < len(build_level(records)):
         raise ValueError("Need at least 10 baseline builds and one monitoring build")
     x = [float(r["strength"]) for r in records]
     if not all(math.isfinite(v) and v > 0 for v in x):
@@ -433,9 +681,11 @@ def analyze(records: list[dict], lsl: float = 900, baseline: int = 25, target: f
     return _clean({
         "n": a.n, "mean": a.avg, "baseline_mean": a.center, "baseline_sigma": a.sigma,
         "overall_sd": a.overall_sd, "Cpl": a.cpl, "Ppl": a.ppl, **{k: a.cap[k] for k in ("Cp", "Cpk", "Cpu", "Pp", "Ppk", "Ppu")},
-        "lsl": lsl, "usl": a.usl, "descriptive": a.desc,
+        "lsl": lsl, "usl": a.usl, "descriptive": a.desc, "chart": a.chart,
+        "capability_basis": a.cap_basis, "normality": a.normal, "expected_out_of_spec_ppm": a.expected,
+        **({"coupons_per_build": a.xs.n, "xbar_center": a.xs.center, "sigma_within": a.xs.sigma} if a.xs else {}),
         "failed_strength_tests": len(a.fails), "pass_rate": p, "wilson_95": [lo, hi],
-        "tests_applied": list(a.tests) + (["MR"] if mr_rule else []),
+        "tests_applied": list(a.tests) + (["S"] if a.xs else (["MR"] if mr_rule else [])),
         "signals": _signals_json(a),
         "stable_under_selected_rules": a.stable,
         "capability_screen_passed": a.stable and a.cpk >= target,

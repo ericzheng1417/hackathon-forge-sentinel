@@ -4,8 +4,9 @@ Definitions for every column Forge Sentinel reads. The same columns are used by 
 by CSV import in the app, and by `python/analyze.py`.
 
 **One row = one build** (one print job on one machine) **with one representative tensile test
-result.** Rows must be in the order the builds were made, oldest first, because the tool uses row
-order as time order.
+result**, or, if you test several coupons per build, **one row = one coupon** with a `coupon` column (see
+below). Rows must be in the order the builds were made, oldest first, because the tool uses row order as time
+order.
 
 ## File formats
 
@@ -22,6 +23,7 @@ The column rules below are the same for both formats.
 |---|---|---|---|---|---|
 | `id` | **Required** | text | — | `C-044` | Unique within each machine |
 | `machine` | **Required** | text | — | `LPBF-C` | Any label; each machine is analysed separately |
+| `coupon` | Optional | text | — | `P3` | Coupon label within a build; unique per build. Several rows per build → X̄-S charts |
 | `strength` | **Required** | number | MPa | `931.4` | > 0 |
 | `oxygen` | Optional | number | ppm | `78.2` | ≥ 0 |
 | `humidity` | Optional | number | % RH | `35.9` | 0–100 |
@@ -37,8 +39,8 @@ The column rules below are the same for both formats.
 - **Ignored** columns, and any other extra columns, are accepted and not used.
 - Column names are not case-sensitive. Use a decimal point, not a comma, for decimals. Don't include
   units or thousands separators in the cells.
-- Each machine needs at least 30 rows, and strength must vary within the first 25 builds (zero
-  variation usually means the measurement resolution is too coarse).
+- Each machine needs at least 30 builds (20 when coupons are recorded), and strength must vary within the
+  first 25 builds (zero variation usually means the measurement resolution is too coarse).
 
 ## Variables in detail
 
@@ -51,13 +53,28 @@ The printer the build ran on, e.g. `LPBF-A`. Control limits and capability are c
 machine**, because each printer has its own normal variation. Only combine builds that use the same
 part family, material, orientation and heat-treatment route.
 
+### `coupon` — coupon label · optional
+Use this column when several tensile coupons are pulled from the same build: one row per coupon, with the same
+`id` for all coupons of a build and a label that is unique within the build. Plate position (e.g. `P1`–`P4`) is
+the most useful label, because it lets you spot position-dependent problems. A plain number (1, 2, 3) also works.
+
+- **What changes:** each build becomes a **subgroup**. The tool draws an **X̄ chart** (average strength per build)
+  and an **S chart** (spread of the coupons within each build) instead of the I-MR chart. Capability uses the
+  within-build σ̂ = s̄ / c₄, and Cp/Cpk/Pp/Ppk, the histogram and the normality test use every coupon.
+- **Process variables** (oxygen, humidity, …) are build-level conditions. Repeat the build's values on each of its
+  coupon rows (or fill them on one row only); the tool averages them per build.
+- **Pass/fail:** a build fails if **any** of its coupons is outside the specification.
+- **Requirements:** at least 20 builds per machine (instead of 30) and at least 2 coupons in most builds. The
+  number of coupons may vary between builds; control limits then step with the coupon count.
+- Without a `coupon` column, two rows with the same `id` are rejected as duplicates.
+
 ### `strength` — ultimate tensile strength (MPa) · *required*
 The highest stress a tensile test specimen withstands before breaking.
 
 - **How it's measured:** a tensile test to ASTM E8/E8M on a witness coupon printed in the same build,
   in the same orientation as the bracket, and given the same heat treatment. Record one
-  representative value per build: either the coupon designated by the test plan, or the build average
-  if several coupons are pulled. Several coupons from one build are **not** independent results.
+  representative value per build (the coupon designated by the test plan), **or** every coupon with a `coupon`
+  column. Don't record several coupons from one build as separate builds: they are not independent results.
 - **Why it matters:** this is the value the client's acceptance test checks. The default
   specification (900–1100 MPa) is illustrative. For reference, ASTM F2924 (Ti-6Al-4V made by powder
   bed fusion) sets a minimum tensile strength of 895 MPa; use the limits in your contract or drawing.

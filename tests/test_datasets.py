@@ -37,7 +37,7 @@ class Reproducible(unittest.TestCase):
             import contextlib, io
             with contextlib.redirect_stdout(io.StringIO()):
                 gen.main()
-            for name in ("01_stable_capable.csv", "02_oxygen_drift.csv", "03_strength_only.csv"):
+            for name in ("01_stable_capable.csv", "02_oxygen_drift.csv", "03_strength_only.csv", "04_coupon_spread.csv"):
                 self.assertEqual((DS / name).read_bytes(), (pathlib.Path(tmp) / name).read_bytes(), name)
 
 

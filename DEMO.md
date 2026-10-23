@@ -1,6 +1,6 @@
 # Demonstration
 
-This walkthrough uses the three test datasets in [`datasets/`](datasets/README.md) to show what Forge
+This walkthrough uses the four test datasets in [`datasets/`](datasets/README.md) to show what Forge
 Sentinel does for a contractor whose titanium brackets are failing client strength tests:
 
 1. **Monitor:** is the printing process stable, and is it capable of meeting the specification?
@@ -94,14 +94,20 @@ Now switch the variable selector to **Chamber oxygen**:
 
 ![Capability page for the oxygen-drift dataset](docs/images/06_drift_capability.png)
 
-The **Capability** page sets out every index (Cp 3.31, Cpk 2.04, Pp 1.54, Ppk 0.95). Its evidence
-checklist shows the gap: the monitoring period is not free of signals, and Ppk is below target.
+The **Capability** page sets out every index (Cp 3.31, Cpk 2.04, Pp 1.54, Ppk 0.95). The **distribution graph**
+overlays two fitted normal curves on the strength histogram: a narrow one using within σ (what the process can do
+when stable) and a wide one using overall s (what it actually delivered). The **normal probability plot** and the
+**Anderson-Darling test** (A² = 3.03, p < 0.005) show the data are not normal, because the drift adds a low tail.
+So the page warns that the indices and the normal-theory ppm estimate (about 2,190 ppm using overall s) should be
+treated with caution. The evidence checklist shows the gaps: signals in the monitoring period, Ppk below target, and
+normality not met.
 
 ![Statistics page for the oxygen-drift dataset](docs/images/07_drift_statistics.png)
 
 The **Statistics** page shows the descriptive picture: mean 961.5 vs median 968.1 MPa (the drift
 pulls the mean down), SD 21.60 MPa, CV 2.25%, range 96.2 MPa. Compare that with SD 10.9 and CV 1.12% in the
-stable dataset.
+stable dataset, where the Anderson-Darling test passes (p = 0.37 on LPBF-A). Every variable gets a box plot, a
+histogram with a fitted normal curve and a normal probability plot.
 
 Finally, **Corrective actions** lists the response, starting with *Contain affected production* and
 *Investigate chamber atmosphere* (check the oxygen sensor, purge logs, seals and gas flow). The engineer
@@ -118,13 +124,15 @@ get a 5-page summary to send to the client or a manager.
 
 ![Page 1 of the printable report](docs/images/10_report_page1.png)
 
-Page 1 has the verdict, key numbers and the I-MR charts. Later pages cover the 8 tests and signal log,
-capability and out-of-spec builds, and **Where to look**. That section ranks process variables by their
-link to strength, so chamber oxygen comes first, flagged 5 builds before strength:
+Page 1 has the verdict, key numbers and the I-MR charts (X̄-S charts for coupon data). Page 2 has the 8 tests
+and the signal log. Page 3 covers capability: the distribution graph with both fitted normal curves, the
+indices, the normality check with expected vs observed out-of-spec counts, the probability plot and the failing builds:
 
-![Page 3 of the printable report: capability and where to look](docs/images/11_report_page3.png)
+![Page 3 of the printable report: capability and distribution check](docs/images/11_report_page3.png)
 
-The report ends with descriptive statistics, corrective-action status and notes, and the method and limitations.
+Page 4, **Where to look**, ranks process variables by their link to strength, so chamber oxygen comes first,
+flagged 5 builds before strength. The report ends with descriptive statistics, corrective-action status and notes,
+and the method and limitations.
 
 **Excel workbook** downloads the same results as a workbook: a Summary sheet with a native Excel control chart, the full
 build data with control limits and PASS/FAIL (failures shaded, filters on), and sheets for statistics,
@@ -158,6 +166,44 @@ replaced after build 60. The tool found the change, its timing and its cause fro
 
 **What actually happened:** a new powder lot was introduced at build 36 and lowered mean strength by
 about 46 MPa.
+
+---
+
+## Scenario 4 — Several coupons per build: X̄ and S charts (`04_coupon_spread.csv`)
+
+*Question: we test four coupons from every build. Can the tool use all of them?*
+
+The file has one row per coupon, with a `coupon` column holding the plate position (P1–P4). The tool detects
+this and treats each build's four coupons as a **subgroup**.
+
+![Overview for the coupon dataset](docs/images/15_coupons_overview.png)
+
+- The filter bar shows *40 sequential builds · 4 coupons/build · Tests 1–8 + S chart*, and the overview's stability
+  chart is now an **X̄ chart** (mean strength per build).
+
+![X̄ and S charts](docs/images/13_coupons_control.png)
+
+- **Process control** shows the **X̄ chart** (build averages; limits x̿ ± A₃·s̄ = 955.9–979.7 MPa) and the
+  **S chart** (spread of the four coupons in each build; UCL = B₄·s̄ = 16.60 MPa).
+- The **S chart flags first, at build 30**: coupons on the same plate are drifting apart. The X̄ chart doesn't
+  flag until **build 34**. An I-MR chart of build averages would also wait until build 34, so recording every
+  coupon buys **4 builds of extra warning**.
+- Click a flagged build to see its coupons. In late builds P4 is far below P1 and P2, which points to a
+  position-dependent cause such as gas flow across the plate rather than a whole-build cause such as powder or oxygen.
+- Builds **E-037** and **E-040** each have a P4 coupon below 900 MPa, so they fail, even though their *averages*
+  pass.
+
+![Capability with distribution graph and probability plot](docs/images/14_coupons_capability.png)
+
+- **Capability** now uses the within-build σ̂ = s̄ / c₄(4) = 7.95 MPa (Cp 4.19, Cpk 2.66) and the overall SD of all
+  160 coupons (Pp 2.16, Ppk 1.37).
+- **The distribution check changes the conclusion.** The 160 coupon strengths are clearly not normal (Anderson-Darling
+  A² = 8.37, p < 0.005); the probability plot curves away at the low end. A normal fit predicts only about
+  **19 ppm** out of spec, but the observed rate is **2 of 160 coupons (12,500 ppm)**. The page flags this and tells
+  the engineer to trust the observed failures over the normal-theory estimate.
+
+**What actually happened:** from build 26 the argon flow across the plate degraded, so coupons far from the inlet
+(P4, and P3 less so) lost strength build after build.
 
 ---
 

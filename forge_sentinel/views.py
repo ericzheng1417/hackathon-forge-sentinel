@@ -93,6 +93,12 @@ def export_dialog(machine: str, n: int) -> str:
             'report was downloaded instead. Open it and choose <b>Print → Save as PDF</b>.</p>')
 
 
+def coupon_note(a: Analysis) -> str:
+    if not a.xs:
+        return ""
+    return f" · {a.xs.typical_n} coupons/build" if a.xs.equal_n else f" · {min(a.xs.n)}–{max(a.xs.n)} coupons/build"
+
+
 def tests_label(a: Analysis, mr_rule: bool) -> str:
     t = list(a.tests)
     if t == list(range(1, 9)):
@@ -101,6 +107,8 @@ def tests_label(a: Analysis, mr_rule: bool) -> str:
         lab = "Tests " + ", ".join(map(str, t))
     else:
         lab = "No pattern tests"
+    if a.xs:
+        return lab + " + S chart"
     return lab + (" + MR" if mr_rule else "")
 
 
@@ -108,7 +116,8 @@ def filters(machines: list[str], machine: str, a: Analysis, mr_rule: bool = True
     opts = "".join(f'<option value="{esc(m)}" {"selected" if m == machine else ""}>{esc(m)}</option>' for m in machines)
     return (f'<div class="filters"><label>Machine <select aria-label="Machine" onchange="fsMachine(this.value)">{opts}'
             f'</select></label><span>Ti-6Al-4V &nbsp; <span class="tag">Bracket family A</span></span>'
-            f'<span class="right">{a.n} sequential builds · Baseline: first {a.baseline} · {tests_label(a, mr_rule)}</span>'
+            f'<span class="right">{a.n} sequential builds{coupon_note(a)} · Baseline: first {a.baseline} · '
+            f'{tests_label(a, mr_rule)}</span>'
             f'<button class="link" onclick="fsOpen(\'config\')">Configure ↗</button></div>')
 
 
@@ -135,12 +144,19 @@ def metric_card(label, value, note, badge="", cls="") -> str:
 def table(rows: list[dict], a: Analysis) -> str:
     index = {id(r): i for i, r in enumerate(a.records)}
     body = "".join(
-        f'<tr><td><strong>{esc(str(r["id"]))}</strong></td><td>{num(r["strength"])} <span style="color:#96a19c">MPa</span></td>'
+        f'<tr><td><strong>{esc(str(r["id"]))}</strong></td><td>{strength_cell(r)}</td>'
         f'<td>{num(r["oxygen"])}</td><td>{num(r["stress"])}</td><td><span class="pill {"red" if a.is_fail(r) else ""}">'
         f'{"FAIL" if a.is_fail(r) else "PASS"}</span></td><td><button class="link" onclick="fsBuild({index[id(r)]})" '
         f'aria-label="View build {esc(str(r["id"]))}">↗</button></td></tr>' for r in rows)
     return ('<div class="tablewrap"><table><thead><tr><th>BUILD ID</th><th>STRENGTH</th><th>O₂ / ppm</th>'
             f'<th>STRESS / MPa</th><th>TEST RESULT</th><th></th></tr></thead><tbody>{body}</tbody></table></div>')
+
+
+def strength_cell(r: dict) -> str:
+    if r.get("n_coupons", 1) > 1:
+        return (f'{fmt(r["strength"], 1)} <span style="color:#96a19c">MPa · mean of {r["n_coupons"]}, '
+                f'min {fmt(r["strength_min"], 1)}</span>')
+    return f'{num(r["strength"])} <span style="color:#96a19c">MPa</span>'
 
 
 def _bar_width(r: float) -> float:
@@ -158,6 +174,42 @@ def drivers(a: Analysis) -> str:
         f'<div class="driver"><div class="driverhead">{VARS[d["v"]][0]}<span>r = {fmt(d["r"])}</span></div>'
         f'<div class="bar"><div style="width:{_bar_width(d["r"]):.1f}%"></div></div></div>'
         for d in associations(a.records)[:4])
+
+
+def dist_curves(a: Analysis, within: bool = True) -> list:
+    """Fitted normal curves for a histogram: overall (s) always, within (σ̂) for strength."""
+    m = a.desc["mean"]
+    curves = []
+    if within and a.metric == "strength" and _ok(a.sigma):
+        curves.append((m, a.sigma, "#216957", False, f"Normal fit, within σ ({fmt(a.sigma, 1)})"))
+    curves.append((m, a.desc["sd"], "#c36a57" if within and a.metric == "strength" else "#216957", True,
+                   f"Normal fit, overall s ({fmt(a.desc['sd'], 1)})"))
+    return curves
+
+
+def _ok(v) -> bool:
+    return isinstance(v, (int, float)) and math.isfinite(v) and v > 0
+
+
+def normality_text(a: Analysis) -> tuple[str, str, str]:
+    """(value, note, pill class) describing the Anderson-Darling result."""
+    nm = a.normal or {}
+    if not isinstance(nm.get("p"), float) or not math.isfinite(nm["p"]):
+        return "—", "needs at least 8 values", ""
+    p = nm["p"]
+    val = "< 0.005" if p < 0.005 else fmt(p, 3)
+    return (val, f"Anderson-Darling A² = {fmt(nm['ad'], 3)} · {'looks normal' if nm['normal'] else 'not normal (p < 0.05)'}",
+            "" if nm["normal"] else "amber")
+
+
+def ppm(v) -> str:
+    if not isinstance(v, (int, float)) or not math.isfinite(v):
+        return "—"
+    return f"{v:,.0f}" if v >= 10 else (f"{v:.1f}" if v >= 0.1 else ("< 0.1" if v > 0 else "0"))
+
+
+XBAR_SUB = "X̄ chart · mean of each build\'s coupons"
+STANDARDISED_NOTE = ", standardised by each build\'s coupon count"
 
 
 # -- pages ----------------------------------------------------------------
@@ -179,12 +231,14 @@ def overview(a: Analysis, cfg: dict) -> str:
                if a.usl is not None else f'<div class="keyline"><span>Lower spec limit</span><strong>{num(a.lsl)} MPa</strong></div>')
     return (banner(a) + f'<div class="metrics">{metrics}</div>'
             '<div class="grid"><section class="fs-card"><div class="cardhead"><div><h2>Strength stability</h2>'
-            '<p>Individuals chart · sequential build order</p></div><button onclick="fsGo(\'Process control\')">Explore chart ↗</button></div>'
-            f'{charts.control_chart(a, a.lsl, a.usl)}<div class="chartnote"><span>Baseline builds 1–{a.baseline} · 3σ control limits</span>'
+            f'<p>{XBAR_SUB if a.xs else "Individuals chart · sequential build order"}</p></div>'
+            '<button onclick="fsGo(\'Process control\')">Explore chart ↗</button></div>'
+            f'{charts.xbar_chart(a) if a.xs else charts.control_chart(a, a.lsl, a.usl)}'
+            f'<div class="chartnote"><span>Baseline builds 1–{a.baseline} · 3σ control limits</span>'
             f'<strong>{"No signals detected" if a.stable else "Special-cause signals detected"}</strong></div></section>'
             '<section class="fs-card"><div class="cardhead"><div><h2>Capability snapshot</h2><p>Tensile strength against specification</p></div>'
             f'<span class="pill amber">{"REVIEW" if a.stable else "UNSTABLE"}</span></div>'
-            f'{charts.histogram(a.x, "Strength (MPa)", a.lsl, a.usl)}{usl_row}'
+            f'{charts.histogram(a.values, "Strength (MPa)", a.lsl, a.usl)}{usl_row}'
             f'<div class="keyline"><span>Cp / Cpk</span><strong>{fmt(a.cap["Cp"])} / {fmt(a.cap["Cpk"])}</strong></div>'
             f'<div class="keyline"><span>Pp / Ppk</span><strong>{fmt(a.cap["Pp"])} / {fmt(a.cap["Ppk"])}</strong></div>'
             f'<div class="keyline"><span>Within / overall σ</span><strong>{fmt(a.sigma, 1)} / {fmt(a.overall_sd, 1)} MPa</strong></div>'
@@ -214,8 +268,13 @@ def tests_reference(am: Analysis, mr_rule: bool) -> str:
         f'<tr class="{"" if t in am.tests else "off"}"><td><strong>Test {t}</strong></td><td>{pat}</td><td>{sig}</td>'
         f'<td>{cell(t, t in am.tests)}</td></tr>'
         for t, (_, pat, sig) in SPECIAL_TESTS.items())
-    rows += (f'<tr class="{"" if mr_rule else "off"}"><td><strong>MR</strong></td><td>One moving range above the MR-chart '
-             f'UCL (3.267 × MR̄)</td><td>A sudden jump between consecutive builds</td><td>{cell("MR", mr_rule)}</td></tr>')
+    if am.xs:
+        rows += ('<tr><td><strong>S</strong></td><td>One within-build standard deviation outside the S-chart limits</td>'
+                 f'<td>Spread across the build plate has changed (gas flow, recoater, laser calibration across the field)</td>'
+                 f'<td>{cell("S", True)}</td></tr>')
+    else:
+        rows += (f'<tr class="{"" if mr_rule else "off"}"><td><strong>MR</strong></td><td>One moving range above the MR-chart '
+                 f'UCL (3.267 × MR̄)</td><td>A sudden jump between consecutive builds</td><td>{cell("MR", mr_rule)}</td></tr>')
     return ('<div class="tablewrap"><table class="tests"><thead><tr><th>TEST</th><th>PATTERN TO LOOK FOR</th>'
             f'<th>WHAT IT USUALLY SIGNALS</th><th>POINTS FLAGGED</th></tr></thead><tbody>{rows}</tbody></table></div>')
 
@@ -225,7 +284,45 @@ def missing_note(am: Analysis) -> str:
             if am.n_missing else "")
 
 
+def control_xbar_s(am: Analysis, cfg: dict, avail: list[str] | None = None) -> str:
+    """Process control page for coupon-level strength data: X̄ and S charts."""
+    xs = am.xs
+    k = coupon_note(am).replace(" · ", "")
+    if am.flags:
+        rows = "".join(
+            f'<tr><td><button class="link" onclick="fsBuild({f.index})">{esc(str(am.records[f.index]["id"]))}</button></td>'
+            f'<td>{"Baseline review" if f.index < am.baseline else "Monitoring"}</td>'
+            f'<td>{fmt(xs.means[f.index], 1)}</td><td>{fmt(xs.sds[f.index], 2) if xs.sds[f.index] is not None else "—"}</td>'
+            f'<td>{" · ".join(f.reasons)}</td></tr>' for f in reversed(am.flags))
+        log = ('<table><thead><tr><th>BUILD</th><th>PHASE</th><th>MEAN (MPa)</th><th>SD (MPa)</th><th>SIGNAL</th></tr></thead>'
+               f'<tbody>{rows}</tbody></table>')
+    else:
+        log = '<div class="empty">No signals under the selected tests.</div>'
+    se = xs.sigma / math.sqrt(xs.typical_n)
+    return ('<div class="fs-card"><div class="cardhead"><div><h2>X̄ chart · mean strength per build</h2>'
+            f'<p>Several coupons per build ({k}) are treated as a subgroup. Limits frozen from the first {am.baseline} builds.</p></div>'
+            f'{variable_select(am.metric, avail)}</div>{charts.xbar_chart(am)}'
+            f'<div class="statsrow"><div><span>GRAND MEAN x̿</span><strong>{fmt(xs.center, 1)}</strong></div>'
+            f'<div><span>WITHIN-BUILD σ̂ ({esc(xs.method)})</span><strong>{fmt(xs.sigma, 2)}</strong></div>'
+            f'<div><span>X̄ LCL / UCL{"" if xs.equal_n else " (n = " + str(xs.typical_n) + ")"}</span>'
+            f'<strong>{fmt(xs.center - 3 * se, 1)} / {fmt(xs.center + 3 * se, 1)}</strong></div>'
+            f'<div><span>MONITORING SIGNALS</span><strong>{len(am.post)}</strong></div></div>'
+            '<p>X̄ limits = x̿ ± 3σ̂/√n (= x̿ ± A₃·s̄). The 8 tests run on the build means'
+            f'{"" if xs.equal_n else STANDARDISED_NOTE}. Specification limits apply to individual '
+            'coupons, so they are not drawn on the X̄ chart; see Capability. Click a point for the build\'s coupons.</p></div>'
+            '<div class="fs-card" style="margin-top:20px"><div class="cardhead"><div><h2>S chart · spread within each build</h2>'
+            '<p>Standard deviation of the coupons in each build. A rising S means the plate is becoming less uniform.</p></div></div>'
+            f'{charts.s_chart(am)}<div class="statsrow"><div><span>S̄ (BASELINE)</span><strong>{fmt(xs.s_bar, 2)}</strong></div>'
+            f'<div><span>S LCL / UCL (B₃·s̄ / B₄·s̄)</span><strong>{fmt(xs.s_lcl[0], 2)} / {fmt(xs.s_ucl[0], 2)}</strong></div></div></div>'
+            '<div class="fs-card" style="margin-top:20px"><div class="cardhead"><div><h2>The 8 tests for special causes</h2>'
+            '<p>Applied to the X̄ chart; the S chart is checked against its control limits. Turn tests on or off in Configure.</p>'
+            f'</div></div>{tests_reference(am, False)}</div>'
+            f'<div class="fs-card" style="margin-top:20px"><h2>Signal log</h2>{log}</div>')
+
+
 def control(am: Analysis, cfg: dict, avail: list[str] | None = None) -> str:
+    if am.xs:
+        return control_xbar_s(am, cfg, avail)
     v = am.metric
     unit = VARS[v][1]
     if am.flags:
@@ -281,10 +378,15 @@ def statistics_page(am: Analysis, all_desc: dict, avail: list[str] | None = None
               + metric_card("Standard error", fmt(d["se_mean"], 3) + u, f"SD ÷ √n · n = {d['n']}"))
     cards2 = (metric_card("Range", fmt(d["range"], 1) + u, f"{fmt(d['min'], 1)} to {fmt(d['max'], 1)}")
               + metric_card("Interquartile range", fmt(d["iqr"], 2) + u, f"Q1 {fmt(d['q1'], 2)} · Q3 {fmt(d['q3'], 2)}")
-              + metric_card("Baseline σ (within)", fmt(am.sigma, 2) + u, "MR̄ ÷ 1.128 · short-term spread")
+              + metric_card("Baseline σ (within)", fmt(am.sigma, 2) + u,
+                            (am.xs.method if am.xs else "MR̄ ÷ 1.128") + " · short-term spread")
               + metric_card("Overall σ", fmt(d["sd"], 2) + u, f"Ratio overall / within {fmt(d['sd'] / am.sigma if am.sigma else float('nan'), 2)}"))
     detail = "".join(f'<div class="keyline"><span>{lab}</span><strong>{fmt(d[k], dec)}{suf}{"" if k in ("n", "cv_pct") else " " + unit}</strong></div>'
                      for k, lab, _, dec, suf in STAT_ROWS)
+    nval, nnote, _ = normality_text(am)
+    detail += f'<div class="keyline"><span>Normality (Anderson-Darling p)</span><strong>{nval}</strong></div>'
+    vidx = [am.idx[j] for j in am.value_idx] if am.value_idx else None
+    what = (f"{len(am.values)} coupons from {am.n} builds" if am.xs else f"{am.n} builds")
     head = "<th>VARIABLE</th>" + "".join(f'<th title="{lab}">{short}</th>' for _, lab, short, _, _ in STAT_ROWS)
     body = "".join(
         f'<tr class="{"sel" if k == v else ""}"><td><button class="link" onclick="fsMetric({js(k)})">{VARS[k][0]}</button>'
@@ -292,13 +394,17 @@ def statistics_page(am: Analysis, all_desc: dict, avail: list[str] | None = None
         + "".join(f"<td>{fmt(all_desc[k][s], dec)}{suf}</td>" for s, _, _, dec, suf in STAT_ROWS) + "</tr>"
         for k in VARS if k in all_desc)
     return ('<div class="fs-card" style="margin-bottom:20px"><div class="cardhead"><div><h2>Descriptive statistics</h2>'
-            f'<p>{label} · {am.n} builds · selected machine · sample statistics (n − 1).{missing_note(am)}</p></div>'
+            f'<p>{label} · {what} · selected machine · sample statistics (n − 1).{missing_note(am)}</p></div>'
             f'{variable_select(v, avail)}</div></div>'
             f'<div class="metrics">{cards1}</div><div class="metrics">{cards2}</div>'
             f'<div class="grid"><section class="fs-card"><h2>Spread and shape</h2><p>Box = Q1 to Q3, line = median, '
-            f'◆ = mean, whiskers = 1.5 × IQR; red points fall outside the whiskers.</p>{charts.boxplot(am.x, d, f"{label} ({unit})", am.idx)}'
-            f'<h3>Distribution</h3>{charts.histogram(am.x, f"{label} ({unit})", bins=24, width=760)}</section>'
+            f'◆ = mean, whiskers = 1.5 × IQR; red points fall outside the whiskers.</p>{charts.boxplot(am.values, d, f"{label} ({unit})", vidx)}'
+            f'<h3>Distribution</h3>{charts.histogram(am.values, f"{label} ({unit})", bins=24, width=760, curves=dist_curves(am, within=False))}</section>'
             f'<section class="fs-card"><h2>Summary · {label}</h2>{detail}</section></div>'
+            f'<div class="fs-card" style="margin-bottom:20px"><h2>Normal probability plot</h2><p>{nnote}. If the points '
+            'follow the dashed line, a normal distribution fits; curving away at the ends means skewed or heavy-tailed data. '
+            'Capability indices and expected-ppm estimates assume normality.</p>'
+            f'{charts.qq_plot(am.values, label, am.normal, vidx)}</div>'
             '<div class="fs-card"><h2>All variables</h2><p>Click a variable to inspect it above. SD = standard deviation, VAR = variance, '
             'CV = coefficient of variation, SE MEAN = standard error of the mean, IQR = interquartile range. Quartiles use the '
             'inclusive method (Excel QUARTILE.INC).</p>'
@@ -313,39 +419,63 @@ def capability(a: Analysis, cfg: dict) -> str:
     two = a.usl is not None
     spec = f"{num(a.lsl)} – {num(a.usl)} MPa" if two else f"≥ {num(a.lsl)} MPa (one-sided)"
     need_usl = "Set an upper spec (USL) in Configure"
+    nval, nnote, ncls = normality_text(a)
+    exp_w, exp_o = a.expected.get("within", {}), a.expected.get("overall", {})
+    unit_word = "coupons" if a.xs else "builds"
+    obs_ppm = (sum(1 for v in a.values if v < a.lsl or (two and v > a.usl)) / len(a.values) * 1e6) if a.values else math.nan
     row1 = (metric_card("Cp · potential", fmt(c["Cp"]), "(USL − LSL) / 6σ within" if two else need_usl)
             + metric_card("Cpk · actual", fmt(c["Cpk"]), f"min(Cpl, Cpu) · target ≥ {t}",
                           "Meets target" if c["Cpk"] >= cfg["target"] else "Below target",
                           "" if c["Cpk"] >= cfg["target"] else "red")
             + metric_card("Pp · overall potential", fmt(c["Pp"]), "(USL − LSL) / 6s overall" if two else need_usl)
             + metric_card("Ppk · overall actual", fmt(c["Ppk"]), "min(Ppl, Ppu) · overall s"))
-    row2 = (metric_card("Cpl / Cpu", f"{fmt(c['Cpl'])}<small> / {fmt(c['Cpu'])}</small>", "(mean − LSL) / 3σ · (USL − mean) / 3σ")
-            + metric_card("Centering · Cpk ÷ Cp", fmt(c["Cpk"] / c["Cp"] if two and c["Cp"] else float("nan")),
-                          "1.00 = centred between limits" if two else need_usl)
-            + metric_card("Observed conformance", fmt(p * 100, 1) + "<small>%</small>", f"{a.passes} in spec / {a.n} tests")
+    row2 = (metric_card("Normality · AD p-value", nval, nnote, "Normal" if ncls == "" and nval != "—" else
+                        ("Not normal" if ncls else ""), ncls)
+            + metric_card("Expected out of spec", ppm(exp_o.get("total_ppm")) + "<small> ppm</small>",
+                          f"normal fit, overall s · observed {ppm(obs_ppm)} ppm of {unit_word}")
+            + metric_card("Observed conformance", fmt(p * 100, 1) + "<small>%</small>",
+                          f"{a.passes} of {a.n} builds fully in spec")
             + metric_card("95% Wilson interval", fmt(lo * 100, 1) + "<small>–" + fmt(hi * 100, 1) + "%</small>",
                           "Binomial interval; independent builds assumed"))
+    centering = fmt(c["Cpk"] / c["Cp"] if two and c["Cp"] else float("nan"))
+    basis = ("Cp/Cpk use the within-build σ̂ from the X̄-S chart (" + esc(a.xs.method) + "); Pp/Ppk use the overall SD of "
+             "all coupons." if a.xs else "Cp/Cpk use within (short-term) σ = MR̄ ÷ 1.128 from the baseline; Pp/Ppk use the "
+             "overall sample standard deviation.")
+    trust = ("" if a.normal.get("normal") is not False else
+             '<p class="warn-note"><b>The data are not normally distributed</b> (Anderson-Darling p &lt; 0.05), so the '
+             'indices and the expected-ppm figures, which assume a normal distribution, may be misleading. Look at the '
+             'histogram and probability plot: an unstable process, a mix of conditions or a skewed tail are common causes. '
+             'Trust the observed failure count over the normal-theory estimate.</p>')
     return (banner(a) + f'<div class="metrics">{row1}</div><div class="metrics">{row2}</div>'
             '<div class="grid"><div class="fs-card"><h2>Strength distribution against specification</h2>'
-            f'{charts.histogram(a.x, "Strength (MPa)", a.lsl, a.usl, bins=36, width=760)}'
+            f'<p>{len(a.values)} individual {unit_word} · bars outside the specification are shaded · curves are fitted '
+            'normal distributions.</p>'
+            f'{charts.histogram(a.values, "Strength (MPa)", a.lsl, a.usl, bins=36, width=760, curves=dist_curves(a))}'
             f'<div class="keyline"><span>Specification</span><strong>{spec}</strong></div>'
             f'<div class="keyline"><span>Mean / within σ / overall s</span><strong>{fmt(a.avg, 1)} / {fmt(a.sigma, 2)} / {fmt(a.overall_sd, 2)} MPa</strong></div>'
-            '<p>Cp and Pp measure potential (spread only); Cpk and Ppk also account for where the process is centred. '
-            'Cp/Cpk use within (short-term) σ = MR̄ ÷ 1.128 from the baseline; Pp/Ppk use the overall sample standard '
-            f'deviation. The {t} target and the default limits are configurable demonstration values, not aerospace '
-            'requirements.</p></div><div class="fs-card"><h2>Evidence checklist</h2>'
+            f'<div class="keyline"><span>Cpl / Cpu · centering (Cpk ÷ Cp)</span><strong>{fmt(c["Cpl"])} / {fmt(c["Cpu"])} · {centering}</strong></div>'
+            f'<div class="keyline"><span>Expected below LSL / above USL (within σ)</span><strong>{ppm(exp_w.get("below_ppm"))} / {ppm(exp_w.get("above_ppm"))} ppm</strong></div>'
+            f'<div class="keyline"><span>Expected below LSL / above USL (overall s)</span><strong>{ppm(exp_o.get("below_ppm"))} / {ppm(exp_o.get("above_ppm"))} ppm</strong></div>'
+            f'<p>Cp and Pp measure potential (spread only); Cpk and Ppk also account for where the process is centred. {basis} '
+            f'The {t} target and the default limits are configurable demonstration values, not aerospace requirements.</p>'
+            f'{trust}</div><div class="fs-card"><h2>Evidence checklist</h2>'
             f'<div class="keyline"><span>Baseline free of selected signals</span><b>{yn(not a.baseflags)}</b></div>'
             f'<div class="keyline"><span>Monitoring free of selected signals</span><b>{yn(not a.post)}</b></div>'
             f'<div class="keyline"><span>Cpk ≥ {t}</span><b>{yn(c["Cpk"] >= cfg["target"])}</b></div>'
             f'<div class="keyline"><span>Ppk ≥ {t}</span><b>{yn(c["Ppk"] >= cfg["target"])}</b></div>'
-            '<div class="keyline"><span>Measurement system / normality</span><b>Not validated</b></div>'
-            '<p>Capability indices are only meaningful for a stable process. Passing these numerical screens alone does '
-            'not establish capability. Verify representative sampling, independence, measurement uncertainty and '
-            'distribution fit with the client.</p></div></div>'
+            f'<div class="keyline"><span>Normality (Anderson-Darling p ≥ 0.05)</span><b>{"—" if a.normal.get("normal") is None else yn(a.normal["normal"])}</b></div>'
+            '<div class="keyline"><span>Measurement system (gauge R&amp;R)</span><b>Not validated</b></div>'
+            '<p>Capability indices are only meaningful for a stable, approximately normal process. Passing these numerical '
+            'screens alone does not establish capability. Verify representative sampling, independence and measurement '
+            'uncertainty with the client.</p></div></div>'
+            '<div class="fs-card" style="margin-bottom:20px"><h2>Normal probability plot</h2>'
+            f'<p>{nnote}. Points following the dashed line support the normal model behind Cp/Cpk and the ppm estimates.</p>'
+            f'{charts.qq_plot(a.values, "Strength", a.normal, [a.idx[j] for j in a.value_idx] if a.value_idx else None)}</div>'
             '<div class="fs-card"><h2>Reliability interpretation</h2><p>The pass-rate interval quantifies uncertainty in '
             'observed strength-test conformance only. It does not estimate in-service fatigue life, survival probability '
             'at mission loads, or bracket structural reliability. Those require load spectra, geometry, material allowables '
             'and fatigue or life-test data, including censored results.</p></div>')
+
 
 def parameters(a: Analysis, cfg: dict) -> str:
     assoc = associations(a.records)
@@ -434,11 +564,23 @@ def methods() -> str:
             f'moving range above the MR UCL is also flagged. Tests can be turned on or off in Configure; using more tests raises '
             f'the false-alarm rate.</p><ul>{tests}</ul>'
             '<p>A signal is an investigation trigger, not a diagnosis.</p>'
+            '<h3>4b. Several coupons per build: X̄ and S charts</h3><p>If the data has a <code>coupon</code> column with '
+            'several rows per build, each build is a subgroup. X̄ᵢ = mean of build i\'s coupons, Sᵢ = their standard '
+            'deviation. Within-build σ̂ = s̄ / c₄(n) from the baseline builds (pooled s / c₄(d) if the coupon count varies). '
+            'X̄ limits = x̿ ± 3σ̂/√nᵢ (= A₃·s̄); S limits = c₄σ̂ ± 3σ̂√(1 − c₄²) (= B₃·s̄ and B₄·s̄), floored at 0. The 8 tests '
+            'run on the X̄ chart (standardised by √nᵢ); an S value outside its limits is flagged as an S-chart signal. '
+            'A build fails if any of its coupons is out of specification; process variables are averaged per build.</p>'
             '<h3>5. Assess capability</h3><p>Cp = (USL − LSL) / 6σ; Cpl = (x̄ − LSL) / 3σ; Cpu = (USL − x̄) / 3σ; '
             'Cpk = min(Cpl, Cpu), using within σ from the baseline. Pp, Ppl, Ppu and Ppk use the same formulas with the overall '
             'sample standard deviation s. If no upper limit is set, Cp and Pp are not defined and Cpk = Cpl. Indices assume a '
             'stable, approximately normal process; on an unstable stream they are descriptive, provisional numbers, not '
             'future-performance claims.</p>'
+            '<h3>5b. Check the distribution</h3><p>The histogram shows fitted normal curves using within σ (matching Cp/Cpk) '
+            'and overall s (matching Pp/Ppk). Normality is checked with the Anderson-Darling test: A² = −n − (1/n) Σ (2i − 1)'
+            '[ln F(x₍ᵢ₎) + ln(1 − F(x₍ₙ₊₁₋ᵢ₎))], adjusted A²* = A²(1 + 0.75/n + 2.25/n²), p-value by D\'Agostino &amp; Stephens '
+            '(1986); p &lt; 0.05 means the normal model does not fit. The normal probability plot shows sorted values against '
+            'standard-normal quantiles (Blom positions). Expected parts out of spec = Φ((LSL − x̄)/σ) + 1 − Φ((USL − x̄)/σ), '
+            'reported in ppm for both σ estimates; it is only meaningful when the data are close to normal.</p>'
             '<h3>6. Keep uncertainty visible</h3><p>The 95% Wilson interval uses independent pass/fail outcomes. Repeated '
             'coupons from one build are not independent builds. This prototype does not validate normality, measurement '
             'uncertainty, fatigue life or statistical power, and it does not predict defect PPM or certify release.</p>'
@@ -462,6 +604,12 @@ def build_detail(a: Analysis, i: int) -> str:
     lines = "".join(f'<div class="keyline"><span>{lab}</span><strong>{num(r[k])} {u}</strong></div>'
                     for k, (lab, u) in VARS.items())
     sig = " · ".join(a.flagged.get(i, [])) or "No strength SPC signals."
+    if r.get("coupons") and len(r["coupons"]) > 1:
+        cells = "".join(f'<span class="pill {"red" if (v < a.lsl or (a.usl is not None and v > a.usl)) else ""}" '
+                        f'style="margin:2px">{esc(str(lab))}: {fmt(v, 1)}</span>' for lab, v in r["coupons"])
+        lines = (f'<div class="keyline"><span>Coupons ({len(r["coupons"])})</span><strong>{cells}</strong></div>'
+                 f'<div class="keyline"><span>Mean / SD of coupons</span><strong>{fmt(r["strength"], 1)} / '
+                 f'{fmt(r["strength_sd"], 2)} MPa</strong></div>' + lines.replace("Tensile strength", "Tensile strength (mean)"))
     return (f'<h2>Build {esc(str(r["id"]))}</h2><p>{esc(str(r["machine"]))} · Sequence {i + 1} · '
             f'{"Baseline" if i < a.baseline else "Monitoring"}</p>{lines}'
             f'<p>Strength result: <strong>{"FAIL" if a.is_fail(r) else "PASS"}</strong>. {sig} '

@@ -167,8 +167,13 @@ def server(input, output, session):
         return _analysis("strength")
 
     @reactive.calc
+    def builds() -> list[dict]:
+        """One row per build (coupons combined) for the selected machine."""
+        return engine.build_level(stream())
+
+    @reactive.calc
     def avail() -> list[str]:
-        return engine.available_vars(stream())
+        return engine.available_vars(builds())
 
     @reactive.calc
     def am() -> engine.Analysis:
@@ -196,8 +201,7 @@ def server(input, output, session):
     def main():
         p, an = page(), a()
         uses_metric = p in ("Process control", "Statistics")
-        all_desc = ({v: engine.describe([r.get(v) for r in stream()]) for v in avail()}
-                    if p == "Statistics" else None)
+        all_desc = engine.describe_all(stream()) if p == "Statistics" else None
         body = views.render_page(p, an, am() if uses_metric else an, cfg(), STORE.load(), all_desc)
         machines = data.machine_list(rows())
         return ui.HTML(views.heading(p) + views.filters(machines, machine(), an, cfg().get("mr_rule", True)) + body)
@@ -221,7 +225,7 @@ def server(input, output, session):
         elif kind == "open" and value == "config":
             show_config()
         elif kind == "open" and value == "export":
-            ui.modal_show(ui.modal(close_button(), ui.HTML(views.export_dialog(machine(), len(stream()))),
+            ui.modal_show(ui.modal(close_button(), ui.HTML(views.export_dialog(machine(), len(builds()))),
                                    easy_close=True, footer=None))
         elif kind == "close_modal":
             ui.modal_remove()
@@ -269,7 +273,8 @@ def server(input, output, session):
                     + '</div><p><b>Or upload your own file</b> (CSV, or Excel .xlsx: the first sheet with an id / machine / '
                     'strength header row is used): one row per build/test result, oldest first, at least 30 rows '
                     'per machine. Use one consistent part family, material, orientation and heat-treatment route.</p>'
-                    '<p><b>Required columns:</b> id, machine, strength (MPa).<br><b>Optional columns:</b> oxygen (ppm), '
+                    '<p><b>Required columns:</b> id, machine, strength (MPa).<br><b>Several coupons per build?</b> Add a '
+                    '<i>coupon</i> column and use one row per coupon; you get X̄ and S charts.<br><b>Optional columns:</b> oxygen (ppm), '
                     'humidity (%), temperature (°C), power (W), speed (mm/s), stress (MPa). Leave out any you don\'t '
                     'measure; blank cells are allowed. IDs must be unique within a machine. Import replaces the current '
                     'dataset for this browser session.</p>'
@@ -286,7 +291,7 @@ def server(input, output, session):
 
     def show_config():
         cfg_err.set("")
-        c, n = cfg(), len(stream())
+        c, n = cfg(), len(builds())
         fields = [ui.input_numeric(f"cfg_{k}", label, c.get(k) or 0, min=lo, max=(n - 1 if hi is None else hi), step=step)
                   for k, label, lo, hi, step in CFG_FIELDS]
         test_choices = {str(t): f"{t} · {engine.SPECIAL_TESTS[t][0]}" for t in engine.ALL_TESTS}
@@ -306,7 +311,7 @@ def server(input, output, session):
         ))
 
     def apply_config():
-        n = len(stream())
+        n = len(builds())
         nxt = dict(cfg())
         for k, label, lo, hi, _step in CFG_FIELDS:
             val = input[f"cfg_{k}"]()
@@ -326,7 +331,7 @@ def server(input, output, session):
         if nxt["baseline"] != float(input["cfg_baseline"]()):
             cfg_err.set("Baseline builds must be a whole number.")
             return
-        if st.stdev([r["strength"] for r in stream()[: nxt["baseline"]]]) == 0:
+        if st.stdev([r["strength"] for r in builds()[: nxt["baseline"]]]) == 0:
             cfg_err.set("Baseline has zero strength variation; choose a different baseline or verify measurement resolution.")
             return
         cfg.set(nxt)

@@ -1,6 +1,6 @@
 # Test datasets
 
-Three synthetic datasets for trying out and checking Forge Sentinel. Each one represents a different
+Four synthetic datasets for trying out and checking Forge Sentinel. Each one represents a different
 situation a titanium-bracket contractor could face, and each produces a known result that the
 automated tests in `tests/test_datasets.py` check.
 
@@ -9,6 +9,7 @@ automated tests in `tests/test_datasets.py` check.
 | [`01_stable_capable.csv`](01_stable_capable.csv) | LPBF-A, LPBF-B | 50 + 50 | all | Healthy process | Stable on both machines, Cpk ≈ 1.9 (≥ 1.33), no failures |
 | [`02_oxygen_drift.csv`](02_oxygen_drift.csv) | LPBF-C | 70 | all | Chamber leak, then repair | Oxygen flagged at build 44, strength at build 49; 3 failures; oxygen is the top suspect (r = −0.84) |
 | [`03_strength_only.csv`](03_strength_only.csv) | LPBF-D | 60 | id, machine, strength | Powder-lot change, minimal data | Shift caught at build 36, before any part fails; Ppk 0.64 |
+| [`04_coupon_spread.csv`](04_coupon_spread.csv) | LPBF-E | 40 builds × 4 coupons = 160 | all + `coupon` | Uneven gas flow across the plate | **X̄-S chart**: S chart flags at build 30, X̄ only at 34; 2 builds have a failing coupon; data not normal |
 | [`02_oxygen_drift.xlsx`](02_oxygen_drift.xlsx) | LPBF-C | 70 | all | Excel copy of file 02 | Identical results; demonstrates Excel import |
 
 Every variable is defined in **[CODEBOOK.md](CODEBOOK.md)**.
@@ -91,6 +92,32 @@ strength. After build 35 a new powder lot is introduced, and mean strength drops
 
 This dataset shows the **minimum input** the tool needs.
 
+## 04 — Four coupons per build (`04_coupon_spread.csv`)
+
+**Story.** The contractor pulls **four tensile coupons from every build**, at plate positions P1–P4, and records
+each one (one row per coupon, with a `coupon` column). From build 26 the argon flow across the plate starts to
+degrade, for example from a partly blocked nozzle. Coupons far from the gas inlet (P4, and P3 to a lesser extent)
+lose strength build after build. Coupons near the inlet (P1, P2) are unaffected. The build *average* falls
+slowly, but the spread *within* each build grows quickly.
+
+**Expected results**
+
+- The tool switches to an **X̄-S chart** automatically (one subgroup = one build's 4 coupons).
+  Within-build σ̂ = s̄ / c₄(4) = **7.95 MPa**; X̄ limits 955.9–979.7 MPa; S chart UCL **16.60 MPa**.
+- The **S chart flags first, at build 30**. The X̄ chart doesn't flag until **build 34**, and neither would an
+  I-MR chart of the build averages. Watching spread gives 4 builds' extra warning.
+- **Failures:** builds E-037 and E-040 each have a P4 coupon below 900 MPa, even though their *averages* pass.
+  A build counts as failed if any coupon is out of spec.
+- **Distribution:** the 160 coupon strengths are **not normal** (Anderson-Darling p < 0.005; long lower tail). A
+  normal fit predicts only about 19 ppm out of spec, but the observed rate is 2 of 160 coupons (12,500 ppm). This
+  shows why the normality check matters before trusting capability figures.
+- Capability: Cp 4.19, Cpk 2.66, Pp 2.16, Ppk 1.37. Cpk looks excellent because within-build σ̂ is estimated from
+  the clean baseline; the unstable verdict and the failures tell the real story.
+
+**Physics note.** Uneven shielding-gas flow across a large build plate is a known cause of position-dependent
+properties in LPBF. Spatter and fumes aren't cleared evenly, so some regions get more defects. The effect size
+here is illustrative.
+
 ---
 
 ## How the data was generated
@@ -111,6 +138,8 @@ python datasets/generate_datasets.py
   no signals before the leak or after the repair in the drift file. This keeps the demonstration easy
   to follow. Real data will contain occasional false alarms.
 - Values are rounded to one decimal place, like typical machine logs and test reports.
+- File 04 adds within-build structure: each build has a small common effect (SD 1.5 MPa) shared by its four
+  coupons, plus independent coupon noise (SD 7 MPa), and the position-dependent loss from build 26.
 - If `openpyxl` is installed, the script also writes `02_oxygen_drift.xlsx`, an Excel copy of file 02 with the
   same cell values. Excel files store a save timestamp, so its bytes differ between runs, but its contents
   don't. `tests/test_exports.py` checks that it imports identically to the CSV.

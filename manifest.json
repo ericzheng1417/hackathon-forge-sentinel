@@ -18,13 +18,13 @@
       "checksum": "1c672af32698b693e3c006bd4f8f629f"
     },
     "DEMO.md": {
-      "checksum": "e45ff18f5936cabb242a6410b38a46cf"
+      "checksum": "8ecbff15717cb6a3aacad08fe050b64b"
     },
     "README.md": {
-      "checksum": "efc3a497854d9936100f07026560b6db"
+      "checksum": "f0fa78150f6c8c508de76f5e476647f6"
     },
     "app.py": {
-      "checksum": "3dd7f485c25fb9701a22a5a7e921a42a"
+      "checksum": "65d87e797c2c61c3c3cc8adbc4badd5c"
     },
     "datasets/01_stable_capable.csv": {
       "checksum": "2f08755726c4c3b6fc79fdaf798fc08e"
@@ -33,34 +33,37 @@
       "checksum": "4d74ce2c678e2aeb13d866126cf97ac3"
     },
     "datasets/02_oxygen_drift.xlsx": {
-      "checksum": "3ba367aeba6f6a23ac1e133a61efd9a1"
+      "checksum": "acdf209cef2777514ad55ba4fefa9240"
     },
     "datasets/03_strength_only.csv": {
       "checksum": "de3032c2d857a635be583e2ffdb509a5"
     },
+    "datasets/04_coupon_spread.csv": {
+      "checksum": "32d6427651acb5496e2198ffdf663d93"
+    },
     "datasets/CODEBOOK.md": {
-      "checksum": "3bc44b7971a8b02ce2022af82c7faa7b"
+      "checksum": "e0f397655fdaa06848f252cdfe4d5f5b"
     },
     "datasets/README.md": {
-      "checksum": "be704d8bd828bdaac7c631cb6071e8cc"
+      "checksum": "9215bb2bacfceb81d993085dc1d66b74"
     },
     "datasets/generate_datasets.py": {
-      "checksum": "aef16a9d1da8a68c3e1d7dc34a54cb66"
+      "checksum": "d59206d9724bc758cd3851f4b68542b9"
     },
     "demo/demo_output.txt": {
-      "checksum": "4826dcf37f347ec81759288d9bd45714"
+      "checksum": "6ead57d9ea235df5bdec726c4327dad6"
     },
     "demo/run_demo.py": {
-      "checksum": "85cfb3707fa55325504d041fc677fb1b"
+      "checksum": "bb32772ba0ec4ea08cece3f4dffeca84"
     },
     "docs/REFERENCE.md": {
-      "checksum": "27d9477c543638d1416f657c5f574cbe"
+      "checksum": "f0480e3fafb66c0862e5ae1008ce3b85"
     },
     "docs/images/01_stable_overview.png": {
-      "checksum": "a6edccee4993b9fa620c46e32025fd3d"
+      "checksum": "01b75b17ab9b14e90e6ef5083940280f"
     },
     "docs/images/02_drift_overview.png": {
-      "checksum": "9c6e53c64a300a1faaa06abfdbd7bd34"
+      "checksum": "0143e6f10be516937295cd7d31568b95"
     },
     "docs/images/03_drift_control_strength.png": {
       "checksum": "9dc8ee4ae9589653664e917ccdd33d5c"
@@ -72,43 +75,52 @@
       "checksum": "aab095db9c645d7309230917f502277a"
     },
     "docs/images/06_drift_capability.png": {
-      "checksum": "5ec532a8804a7dc5f07822925853730a"
+      "checksum": "18c9564aa144ee410d7e71f0d436fa52"
     },
     "docs/images/07_drift_statistics.png": {
-      "checksum": "9be52dda5b1914c159aec830ed138840"
+      "checksum": "c2e0fe41f0aee18c11987d603f3e38f6"
     },
     "docs/images/08_minimal_overview.png": {
-      "checksum": "95b88a53f2a273fac852ab9900694249"
+      "checksum": "440166a16ef258b405c7c36ead93a7be"
     },
     "docs/images/09_minimal_control.png": {
       "checksum": "85dc2d13ab2a9ed2bcb042621628ec24"
     },
     "docs/images/10_report_page1.png": {
-      "checksum": "cac967e7cff09e92c9b7f056da002807"
+      "checksum": "e55edbfd8a0402950beca68e1854effe"
     },
     "docs/images/11_report_page3.png": {
-      "checksum": "f2cec5aea936960a4497d8881b267638"
+      "checksum": "2c23ec5315d297d7ba856bfdcf033c05"
     },
     "docs/images/12_export_dialog.png": {
-      "checksum": "f8df65a75425d80055cd0802f3e5e453"
+      "checksum": "2f796f5c3426dbad0d34708da0752096"
+    },
+    "docs/images/13_coupons_control.png": {
+      "checksum": "c3a9850cc14affd1a01a3a87638a4f22"
+    },
+    "docs/images/14_coupons_capability.png": {
+      "checksum": "1a8d41e8631bc7306e08b94dc327956c"
+    },
+    "docs/images/15_coupons_overview.png": {
+      "checksum": "ad11514c408de42851fa56c3e1955bc4"
     },
     "forge_sentinel/__init__.py": {
       "checksum": "c5abc752d33e41aead1de272f0eb02e7"
     },
     "forge_sentinel/charts.py": {
-      "checksum": "7b519cb9780571bb5e926f4750ffae89"
+      "checksum": "165e5382281f7d9d5ff2a01bc4a7b0fd"
     },
     "forge_sentinel/data.py": {
-      "checksum": "7287cd7839092cd84f0d950a0b4fbab3"
+      "checksum": "4011e237439285c067910d7768c9f387"
     },
     "forge_sentinel/engine.py": {
-      "checksum": "7ce4ed81cedec69593a3bdc5b4464ee4"
+      "checksum": "393fa3dfab8b875dfc1a550299ae2a01"
     },
     "forge_sentinel/exports.py": {
-      "checksum": "e2f0bc8069352a9c30b00330e17ad3ee"
+      "checksum": "f92346bbf0a0233b2df52e97671dae18"
     },
     "forge_sentinel/views.py": {
-      "checksum": "cd9cbd2137709bce9a7468658d9fd867"
+      "checksum": "a63f23c1217dca9ade8354a018b3b7d6"
     },
     "python/analyze.py": {
       "checksum": "e6993be3191b205efaa34c4ec2137869"
@@ -120,7 +132,10 @@
       "checksum": "34028249738c44515f4e9dfd8407ccd8"
     },
     "tests/test_datasets.py": {
-      "checksum": "8f5ea6cc5ecf2050650c96dbdba1439d"
+      "checksum": "f91b219d20ff5ea479e2494b3fdbe9ed"
+    },
+    "tests/test_distribution_subgroups.py": {
+      "checksum": "9e2d3732e76b0a3447327d65eb2e6bcf"
     },
     "tests/test_engine.py": {
       "checksum": "944b5da7fcad908a289e5eccae1f96ba"
@@ -129,7 +144,7 @@
       "checksum": "19955d58d55eb7b3cff91c4db76cc617"
     },
     "www/style.css": {
-      "checksum": "82cf443c5a73ed48c7c4ca9dcfab57be"
+      "checksum": "7b094b02c5ddb0958b397134cee75652"
     }
   }
 }

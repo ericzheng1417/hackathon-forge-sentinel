@@ -47,7 +47,7 @@ engine.associations(rows)[0]     # {'v': 'oxygen', 'r': -0.839, 'n': 70}
 |---|---|
 | `VARS` | `{key: (label, unit)}` for the 7 measured variables: `strength`, `oxygen`, `humidity`, `temperature`, `power`, `speed`, `stress` |
 | `FIELDS` | The 7 variable keys, in order |
-| `COLUMNS` | `("id", "machine", *FIELDS)` |
+| `COLUMNS` | `("id", "machine", "coupon", *FIELDS)`; `coupon` is optional text (one row per coupon) |
 | `REQUIRED_COLUMNS` | `("id", "machine", "strength")`, the only inputs a user must supply |
 | `OPTIONAL_FIELDS` | The 6 process variables (all except strength) |
 | `MIN_VALUES` | `10`: a variable needs this many recorded values to be charted or correlated |
@@ -109,6 +109,29 @@ A point is flagged when it **completes** the pattern:
 Tests 1, 2, 3, 6 and 7 need σ > 0; they are skipped if σ is 0.
 Example: `special_cause_tests([0.1, 2.5, 0.2, 2.2], 0, 1, [2])` → `{3: [2]}`.
 
+### Distribution checks
+
+| Function | Inputs → output | Notes |
+|---|---|---|
+| `anderson_darling(values)` | values → `{"n", "ad", "ad_adj", "p", "normal"}` | Normality test with mean and SD estimated from the data. A² = −n − (1/n) Σ (2i − 1)[ln F(x₍ᵢ₎) + ln(1 − F(x₍ₙ₊₁₋ᵢ₎))]; A²* = A²(1 + 0.75/n + 2.25/n²); p-value from D'Agostino & Stephens (1986). `normal` = p ≥ 0.05; `None` if n < 8 or SD = 0. A² is checked against `scipy.stats.anderson` in the tests. |
+| `normal_quantiles(n)` | n → list of z | Blom plotting positions (i − 0.375)/(n + 0.25) for the normal probability plot. |
+| `expected_out_of_spec(mean, sigma, lsl, usl)` | → `{"below_ppm", "above_ppm", "total_ppm"}` | Φ((LSL − mean)/σ) and 1 − Φ((USL − mean)/σ), × 10⁶. Meaningful only for approximately normal data. |
+
+### Subgroups (several coupons per build)
+
+| Function | Inputs → output | Notes |
+|---|---|---|
+| `has_coupons(records)` | rows → bool | True if any row has a coupon label. |
+| `build_level(records)` | coupon rows → one row per build | Groups by (machine, id) in first-seen order: `strength` = mean of coupons, process variables = mean of recorded values, plus `coupons` [(label, value)], `n_coupons`, `strength_sd`, `strength_min`, `strength_max`. Rows without coupons are returned unchanged (same list object). |
+| `c4(n)` | n → c₄ | √(2/(n−1)) · Γ(n/2)/Γ((n−1)/2), via `math.lgamma`. |
+| `xbar_s_constants(n)` | n → `{"c4", "A3", "B3", "B4"}` | A₃ = 3/(c₄√n); B₃, B₄ = 1 ∓ 3√(1 − c₄²)/c₄ (B₃ floored at 0). Checked against published tables in the tests. |
+| `xbar_s(builds, baseline, tests)` | build-level rows → `XbarS` | Baseline: x̿ = mean of all baseline coupons; σ̂ = s̄/c₄(n) if every baseline build has the same n, else pooled s / c₄(Σ(nᵢ−1)+1). Limits per build i: X̄ = x̿ ± 3σ̂/√nᵢ; S centre c₄(nᵢ)σ̂, limits c₄σ̂ ± 3σ̂√(1 − c₄²) (lower floored at 0). The 8 tests run on zᵢ = (x̄ᵢ − x̿)/(σ̂/√nᵢ); an S value outside its limits is an "S" signal. |
+| `describe_all(stream)` | one machine's rows → `{variable: describe()}` | Strength over every individual result (coupon); process variables over builds. |
+
+`XbarS` fields: `ids`, `n` (coupons per build), `means`, `sds`, `baseline`, `center`, `sigma` (within-build σ̂),
+`s_bar`, `x_lcl`/`x_ucl`, `s_center`/`s_lcl`/`s_ucl` (per build), `method` (text), `x_hits` {index: tests},
+`s_hits` {index: "above"/"below"}, and properties `equal_n` and `typical_n`.
+
 ### `moving_ranges(x) -> list`
 MRᵢ = |xᵢ − xᵢ₋₁|; the first element is `None`.
 
@@ -138,12 +161,18 @@ The main analysis for **one machine**.
 | **mr_rule** | also flag moving ranges above the MR-chart UCL |
 
 Steps:
-1. Baseline: x̄ = mean of the first N values; MR̄ = mean moving range within the baseline; σ = MR̄ / 1.128.
-2. Limits: I chart x̄ ± 3σ; MR chart UCL = 3.267 × MR̄, LCL = 0.
-3. Signals: `special_cause_tests` on every point (baseline included), plus the MR rule.
-4. Capability: `capability()` on **strength** (always the full stream), using baseline σ and overall SD.
-5. Descriptives: `describe()` on the metric.
-6. Failures: strength < LSL or > USL.
+1. Rows are combined with `build_level()` (no change unless there is a coupon column).
+2. Baseline: x̄ = mean of the first N values; MR̄ = mean moving range within the baseline; σ = MR̄ / 1.128.
+3. Limits: I chart x̄ ± 3σ; MR chart UCL = 3.267 × MR̄, LCL = 0.
+4. Signals: `special_cause_tests` on every point (baseline included), plus the MR rule.
+5. Capability: `capability()` on **strength** (always the full stream), using baseline σ and overall SD.
+6. Descriptives: `describe()` on the metric.
+7. **If the metric is strength and builds have several coupons:** `xbar_s()` replaces the I-MR result. The signals
+   become the X̄ tests plus S-chart signals (no MR rule), centre/σ come from the X̄-S chart, `values` holds every
+   coupon, and descriptives and capability use the coupons with within-build σ̂ (`cap_basis` says which).
+8. Distribution: `normal = anderson_darling(values)`; for strength, `expected` = `expected_out_of_spec()` with
+   within σ and with overall s.
+9. Failures: a build fails if its strength (with coupons: any coupon) is < LSL or > USL.
 
 ### `Analysis` (returned object)
 
@@ -161,7 +190,12 @@ Steps:
 | `desc` | dict from `describe()` |
 | `fails`, `passes`, `is_fail(row)` | out-of-spec builds |
 | `test_counts()` | `{test number or "MR": points flagged}` |
-| `avg`, `overall_sd`, `n` | overall mean, sample SD, count |
+| `avg`, `overall_sd`, `n` | overall mean, sample SD (of `values`), number of builds |
+| `values`, `value_idx` | individual observations (every coupon when subgrouped) and the build position of each |
+| `normal` | `anderson_darling(values)` |
+| `expected` | `{"within": ppm dict, "overall": ppm dict}` from `expected_out_of_spec()` (strength only) |
+| `xs`, `chart` | the `XbarS` result (or `None`), and `"Xbar-S"` / `"I-MR"` |
+| `cap_basis` | how within σ was estimated for Cp/Cpk, e.g. `"MR̄ / 1.128"` or `"within-build σ̂ = s̄ / c4(4)"` |
 
 ### `wilson(successes, n, z=1.96) -> (p, low, high)`
 Observed proportion and 95% Wilson score interval:
@@ -199,7 +233,7 @@ It raises `ValueError` if the baseline is < 10 or ≥ n, if strength is not posi
 | `read_upload(raw, filename)` | bytes + file name → rows | Routes `.xlsx`/`.xlsm` to `parse_excel` and everything else to `parse_csv`; rejects old `.xls` with a re-save hint. |
 | `parse_excel(raw)` | `.xlsx` bytes → rows | Needs `openpyxl`. Uses the first worksheet whose first non-empty row contains id/machine/strength (otherwise the first sheet); reads stored values (formula cells use the value Excel last saved); converts numbers stored as whole floats to text IDs, dates to ISO text; pads ragged rows. Then applies `validate_table`. 5 MB limit. |
 | `validate_table(lines)` | list of text rows (header first) → rows | The shared validation used by both CSV and Excel (the rules listed for `parse_csv`). |
-| `parse_csv(raw)` | bytes or str → list of row dicts | Requires `id`, `machine`, `strength`; the 6 optional columns may be absent or blank (stored as `None`); extra columns are ignored; headers are case-insensitive. Rejects files over 2 MB, non-numeric values, out-of-range values (strength ≤ 0, oxygen < 0, humidity outside 0–100, power or speed ≤ 0), duplicate IDs within a machine, fewer than 30 rows per machine, and zero strength variation in the first 25 builds. Raises `ImportError_` with a message naming the row. |
+| `parse_csv(raw)` | bytes or str → list of row dicts | Requires `id`, `machine`, `strength`; the 6 optional columns may be absent or blank (stored as `None`); extra columns are ignored; headers are case-insensitive. Rejects files over 2 MB, non-numeric values, out-of-range values (strength ≤ 0, oxygen < 0, humidity outside 0–100, power or speed ≤ 0), duplicate IDs within a machine (or duplicate coupon labels within a build when a `coupon` column is present), fewer than 30 builds per machine (20 when several coupons per build are recorded), and zero strength variation in the first 25 builds. The `coupon` key is only added to rows when the column exists. Raises `ImportError_` with a message naming the row. |
 | `to_csv(rows)` | rows → CSV text | Writes the required columns plus any optional column that has values; blanks for `None`. |
 | `to_xlsx(rows)` | rows → `.xlsx` bytes | Same columns as `to_csv`, bold header, frozen header row. Needs `openpyxl`. |
 | `SAMPLE_DATASETS` | dict | `{key: (file name, display name)}` for the test datasets offered in the Import dialog. |
@@ -226,8 +260,10 @@ All functions return an SVG string. Clicking a point calls `fsBuild(i)` with the
 | Function | Draws |
 |---|---|
 | `control_chart(a, lsl, usl=None, zones=True)` | I chart: baseline shading, ±1σ/±2σ zone lines labelled A/B/C, UCL/mean/LCL, spec lines (strength only), flagged points in red |
+| `xbar_chart(a)` / `s_chart(a)` | X̄ chart (build means, zones when n is constant) and S chart (within-build SD, axis floored at 0); limits drawn as steps when n varies; flagged points red |
+| `qq_plot(values, label, normal=None, idx=None)` | normal probability plot: sorted values vs Blom quantiles, reference line mean + SD·z, Anderson-Darling result |
 | `mr_chart(a)` | MR chart with MR̄, UCL and LCL = 0 |
-| `histogram(x, label, lsl=None, usl=None, bins=None, width=350)` | histogram; bars outside the spec are shaded red |
+| `histogram(x, label, lsl=None, usl=None, bins=None, width=350, curves=None)` | histogram; bars outside the spec are shaded red; `curves` overlays fitted normal curves [(mean, σ, colour, dashed, label)] scaled to counts (n · bin width · pdf) |
 | `boxplot(x, desc, label, idx=None)` | box (Q1–Q3), median line, mean diamond, 1.5×IQR whiskers, jittered points (outliers red) |
 | `scatter(a, lsl, var="oxygen")` | `var` against strength; failing builds red |
 | `fmt(n, d)`, `num(v)` | number formatting (`—` for missing or non-finite values) |
@@ -235,7 +271,8 @@ All functions return an SVG string. Clicking a point calls `fsBuild(i)` with the
 ## `forge_sentinel/views.py`
 
 Pure functions that return HTML strings. `render_page(page, a, am, cfg, actions, all_desc)` dispatches to:
-`overview`, `control`, `statistics_page`, `capability`, `parameters`, `records`, `tasks`, `methods`.
+`overview`, `control` (or `control_xbar_s` for coupon data), `statistics_page`, `capability`, `parameters`, `records`,
+`tasks`, `methods`. Helpers: `dist_curves(a)` (within/overall normal curves), `normality_text(a)`, `ppm(v)`.
 Here `a` is the strength analysis, `am` the analysis of the selected variable, and `all_desc` maps each
 variable to its `describe()` output. `build_detail(a, i)` builds the pop-up for one build.
 
@@ -301,3 +338,6 @@ process variables, top associations), using `DEFAULT_CONFIG`.
 - `test_datasets.py` checks that the datasets regenerate byte for byte and give the documented results.
 - `test_exports.py` covers Excel import (round trip, the shipped `.xlsx`, a messy real-world workbook, bad files,
   CLI), the HTML report, the JSON report and the Excel workbook. Excel tests are skipped if `openpyxl` is missing.
+- `test_distribution_subgroups.py` covers Anderson-Darling (against scipy), quantiles and expected ppm, the X̄-S
+  constants (against published tables), X̄-S limits on hand-worked equal and unequal-n examples, the S-chart rule,
+  build aggregation, coupon import rules, the coupon dataset's results, its pages, its exports and the CLI.

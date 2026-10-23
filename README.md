@@ -17,14 +17,17 @@ laser power, scan speed, residual stress) are optional; each one you add unlocks
 
 - summarises every measurement with standard Lean Six Sigma statistics (mean, median, standard
   deviation, variance, CV, standard error, range, quartiles),
-- draws individuals and moving-range (I-MR) control charts and checks them with the
-  **8 standard tests for special causes**, flagging builds where the process seems to have changed,
+- draws control charts and checks them with the **8 standard tests for special causes**, flagging builds where the
+  process seems to have changed: individuals and moving-range (**I-MR**) charts for one result per build, and
+  **X̄ and S charts** automatically when several test coupons per build are recorded,
 - says whether the process is *capable* (Cp, Cpk, Pp, Ppk): likely to keep meeting the strength specification,
+- checks the **distribution**: a histogram with fitted normal curves, a normal probability plot, an
+  **Anderson-Darling normality test**, and the expected parts-per-million out of spec,
 - shows which printer conditions move together with strength, so you know where to look first,
 - gives you a simple list for tracking investigations and fixes.
 
-The app opens with built-in demo data. **Three test datasets** (stable process, oxygen-leak failure,
-strength-only data) can be loaded with one click from **Import data**.
+The app opens with built-in demo data. **Four test datasets** (stable process, oxygen-leak failure,
+strength-only data, four coupons per build) can be loaded with one click from **Import data**.
 
 ### Documentation
 
@@ -57,6 +60,8 @@ You don't need these to run the app, but they help you read it.
 | **Control limits (UCL / LCL)** | The band of normal variation (mean ± 3σ), worked out from the baseline. A point outside it is a warning sign. |
 | **Zones A, B, C** | Bands on the control chart: C is within 1σ of the centre line, B is 1–2σ away, A is 2–3σ away. The 8 tests look for patterns across these zones. |
 | **Moving range (MR)** | The absolute difference between one build and the previous one. The MR chart shows short-term jumps. |
+| **Subgroup / coupon** | Several tensile coupons tested from the same build. Each build's coupons form a subgroup. |
+| **X̄ chart / S chart** | For subgroups: the X̄ chart plots each build's average strength, the S chart the standard deviation of its coupons (spread within the build). Limits use the standard constants A₃, B₃, B₄ and c₄. |
 | **8 tests for special causes** | Pattern checks (Western Electric / Nelson rules), such as one point beyond zone A, 8 points in a row on one side, or 6 points steadily rising. Listed in full on the Process control page. |
 | **Signal** | A build the SPC rules flag as unusual. It means "investigate", not "this caused the failure". |
 | **Cp** | Potential capability: how many times the process spread fits inside the specification range. Ignores centring. |
@@ -67,6 +72,9 @@ You don't need these to run the app, but they help you read it.
 | **CV** (coefficient of variation) | Standard deviation as a percentage of the mean, so variables with different units can be compared. |
 | **SE** (standard error of the mean) | How precisely the average is known: s ÷ √n. Shrinks as you test more builds. |
 | **Range / IQR** | Max − min, and the spread of the middle 50% of values (Q3 − Q1). |
+| **Normal probability plot (Q-Q plot)** | Sorted values plotted against where a normal distribution would put them. A straight line means the data are approximately normal. |
+| **Anderson-Darling test** | A test of whether the data follow a normal distribution. p < 0.05 means they don't. Cp/Cpk and the ppm estimates assume normality. |
+| **ppm** | Parts per million: the expected number of out-of-spec parts per million, from the fitted normal curve. |
 | **Wilson interval** | A range that shows how sure we can be about the pass rate, given how many builds were tested. |
 | **Correlation (r)** | How closely a printer condition moves with strength, from −1 to +1. It suggests where to look; it does not prove cause. |
 
@@ -77,9 +85,9 @@ You don't need these to run the app, but they help you read it.
 | Page | What you'll find |
 |---|---|
 | **Overview** | One-screen summary: pass rate, capability score, average strength, number of warnings, the strength trend chart, and the most recent builds. |
-| **Process control** | I chart with zones A/B/C and an MR chart for any measurement (strength, oxygen, humidity…), the 8 tests with how many points each flagged, and a log of every flagged build with the tests it failed. |
-| **Statistics** | Descriptive statistics for any variable (mean, median, SD, variance, CV, SE, range, quartiles, IQR), a box plot and histogram, and a table comparing all variables. |
-| **Capability** | Cp, Cpk, Pp, Ppk, Cpl, Cpu and centring, the observed pass rate with its uncertainty, and a checklist of what is and isn't proven. |
+| **Process control** | I chart with zones A/B/C and an MR chart for any measurement (strength, oxygen, humidity…), or **X̄ and S charts** for strength when several coupons per build are recorded. Also the 8 tests with how many points each flagged, and a log of every flagged build with the tests it failed. |
+| **Statistics** | Descriptive statistics for any variable (mean, median, SD, variance, CV, SE, range, quartiles, IQR), a box plot, a histogram with a fitted normal curve, a normal probability plot with the Anderson-Darling result, and a table comparing all variables. |
+| **Capability** | Cp, Cpk, Pp, Ppk, Cpl, Cpu and centring; the distribution graph (histogram with within-σ and overall-σ normal curves against the spec limits); the normality test and normal probability plot; expected vs observed parts out of spec; the observed pass rate with its uncertainty; and a checklist of what is and isn't proven. |
 | **Parameter analysis** | Which printer conditions are most associated with strength, plus counts of builds with high oxygen or humidity. |
 | **Build records** | Every build for the selected machine, newest first. Click ↗ for full details. Download as CSV. |
 | **Corrective actions** | Four suggested investigation steps. Set each one's status and add notes. |
@@ -176,6 +184,7 @@ fine. Headers are not case-sensitive. Old `.xls` files must be re-saved as `.xls
 |---|---|---|---|
 | `id` | **required** | Build ID (unique within each machine) | text |
 | `machine` | **required** | Printer name, e.g. `LPBF-01` | text |
+| `coupon` | optional | Coupon label (e.g. plate position `P1`–`P4`) when several coupons per build are tested: one row per coupon | text |
 | `strength` | **required** | Measured tensile strength | MPa |
 | `oxygen` | optional | Oxygen in the build chamber | ppm |
 | `humidity` | optional | Relative humidity | % |
@@ -189,9 +198,12 @@ Full definitions and how each is measured are in [datasets/CODEBOOK.md](datasets
 Rules:
 
 - **Rows must be in the order the builds happened**, oldest first. The app uses row order as time order.
-- **At least 30 rows per machine.** Optional columns can be left out entirely, or blank for some builds.
+- **At least 30 builds per machine** (20 if you record several coupons per build). Optional columns can be left
+  out entirely, or blank for some builds.
   Other columns (such as a build date) are ignored. Maximum file size is 2 MB.
-- **One row per build.** Several test samples from the same build are not independent results.
+- **One row per build**, or **one row per coupon with a `coupon` column**. Several coupons from the same build
+  are not independent results, so don't enter them as separate builds; with a `coupon` column the tool treats
+  them correctly as a subgroup (X̄-S charts, within-build σ̂ = s̄ / c₄, and a build fails if any coupon fails).
 - Keep each machine's data to one part type, material and process route, so you compare like with like.
 
 Click **Example (CSV)** or **Example (Excel)** in the Import window for a correctly formatted file.
@@ -226,14 +238,15 @@ The report includes Cp/Cpk/Pp/Ppk, descriptive statistics, and every flagged bui
 ```
 app.py                     The Shiny app: page layout, buttons, uploads, downloads
 forge_sentinel/
-  engine.py                All the statistics (descriptives, I-MR limits, 8 tests, Cp/Cpk/Pp/Ppk, Wilson, correlations)
+  engine.py                All the statistics (descriptives, I-MR and X̄-S limits, 8 tests, Cp/Cpk/Pp/Ppk,
+                           Anderson-Darling, expected ppm, Wilson, correlations)
   data.py                  Demo data, CSV / Excel import and checking, CSV / Excel export
   exports.py               Printable HTML report, Excel workbook and JSON report
   charts.py                Draws the charts (as SVG images)
   views.py                 Builds the HTML for each page
 www/style.css              Visual styling
 python/analyze.py          Command-line version of the analysis
-datasets/                  3 test datasets, their generator, README and codebook
+datasets/                  4 test datasets (+ an Excel copy), their generator, README and codebook
 demo/                      run_demo.py (text demonstration) and its saved output
 docs/                      Function reference and demo screenshots
 DEMO.md                    Demonstration walkthrough
@@ -255,7 +268,9 @@ JavaScript version of this tool, each of the 8 special-cause tests on hand-built
 descriptive statistics and Cp/Cpk formulas. They also cover CSV validation, optional columns, page
 rendering and the command-line tool. `tests/test_datasets.py` regenerates the test datasets, checks
 they match the committed files byte for byte, and checks every result quoted in [DEMO.md](DEMO.md). `tests/test_exports.py` covers Excel import (including awkward workbooks) and the HTML, Excel and JSON
-reports.
+reports. `tests/test_distribution_subgroups.py` checks the Anderson-Darling statistic against scipy, the X̄-S
+constants against published tables, the X̄-S limits on hand-worked examples, coupon import rules, and the coupon
+dataset's results.
 
 ## Reproducing the results
 
@@ -263,9 +278,9 @@ Everything in this repository can be regenerated from the code:
 
 ```
 pip install -r requirements.txt          # Shiny (dashboard) + openpyxl (Excel)
-python datasets/generate_datasets.py     # recreates the 3 test CSVs (fixed seeds)
+python datasets/generate_datasets.py     # recreates the 4 test CSVs (fixed seeds)
 python demo/run_demo.py                  # recomputes every number in DEMO.md
-python -m unittest discover tests        # 47 automated checks
+python -m unittest discover tests        # 70 automated checks
 shiny run app.py                         # the dashboard
 ```
 
@@ -292,3 +307,6 @@ deployment uses Python 3.12.4 (see `manifest.json`).
 - NIST/SEMATECH e-Handbook: [Individuals control charts](https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc322.htm)
 - NIST/SEMATECH e-Handbook: [Process capability](https://www.itl.nist.gov/div898/handbook/pmc/section1/pmc16.htm)
 - NIST/SEMATECH e-Handbook: [What are control charts? (run rules)](https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc32.htm)
+- NIST/SEMATECH e-Handbook: [X̄ and s control charts](https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc321.htm)
+- NIST/SEMATECH e-Handbook: [Anderson-Darling test](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35e.htm)
+- D'Agostino, R. B. & Stephens, M. A. (1986). *Goodness-of-Fit Techniques.* Marcel Dekker (Anderson-Darling p-values).
