@@ -54,6 +54,14 @@ class ActionStore:
 STORE = ActionStore(ACTIONS_FILE)
 TASK_IDS = {t[0] for t in views.TASKS}
 
+# Test datasets shipped in datasets/ that can be loaded from the Import dialog (see datasets/README.md)
+DATASETS = ROOT / "datasets"
+SAMPLES = {
+    "stable": ("01_stable_capable.csv", "Stable & capable"),
+    "drift": ("02_oxygen_drift.csv", "Oxygen drift"),
+    "minimal": ("03_strength_only.csv", "Strength only (minimal inputs)"),
+}
+
 # -- UI -------------------------------------------------------------------
 
 # All clickable chrome is server-rendered HTML; these helpers forward clicks to
@@ -142,8 +150,13 @@ def server(input, output, session):
         return _analysis("strength")
 
     @reactive.calc
+    def avail() -> list[str]:
+        return engine.available_vars(stream())
+
+    @reactive.calc
     def am() -> engine.Analysis:
-        return _analysis(metric())
+        # fall back to strength if the selected variable isn't recorded for this machine
+        return _analysis(metric() if metric() in avail() else "strength")
 
     # ---- rendering ----
     @render.ui
@@ -152,7 +165,13 @@ def server(input, output, session):
 
     @render.ui
     def header_bits():
-        badge = "◉ &nbsp; DEMONSTRATION DATA" if source() == "demo" else "◉ &nbsp; IMPORTED CSV · SESSION"
+        src = source()
+        if src == "demo":
+            badge = "◉ &nbsp; DEMONSTRATION DATA"
+        elif src.startswith("sample:"):
+            badge = "◉ &nbsp; TEST DATASET · " + SAMPLES[src[7:]][1].upper()
+        else:
+            badge = "◉ &nbsp; IMPORTED CSV · SESSION"
         return ui.HTML(f'<span>Manufacturing intelligence <b>/</b> <span id="crumb">{page()}</span></span>'
                        f'<span class="demo">{badge}</span>')
 
@@ -160,7 +179,8 @@ def server(input, output, session):
     def main():
         p, an = page(), a()
         uses_metric = p in ("Process control", "Statistics")
-        all_desc = {v: engine.describe([r[v] for r in stream()]) for v in engine.FIELDS} if p == "Statistics" else None
+        all_desc = ({v: engine.describe([r.get(v) for r in stream()]) for v in avail()}
+                    if p == "Statistics" else None)
         body = views.render_page(p, an, am() if uses_metric else an, cfg(), STORE.load(), all_desc)
         machines = data.machine_list(rows())
         return ui.HTML(views.heading(p) + views.filters(machines, machine(), an, cfg().get("mr_rule", True)) + body)
@@ -185,6 +205,13 @@ def server(input, output, session):
             show_config()
         elif kind == "apply_config":
             apply_config()
+        elif kind == "sample" and value in SAMPLES:
+            fname, label = SAMPLES[value]
+            try:
+                load_rows(data.parse_csv((DATASETS / fname).read_bytes()), f"sample:{value}")
+                ui.notification_show(f"Loaded test dataset: {label}.", type="message", duration=4)
+            except (OSError, data.ImportError_) as e:
+                import_err.set(f"Could not load {fname}: {e}")
         elif kind == "restore_demo":
             rows.set(data.seed_rows())
             machine.set("LPBF-01")
@@ -196,6 +223,13 @@ def server(input, output, session):
             if tid in TASK_IDS and key in ("status", "note"):
                 STORE.save(tid, key, str(value.get("value", ""))[:4000])
 
+    def load_rows(parsed: list[dict], src: str):
+        rows.set(parsed)
+        machine.set(data.machine_list(parsed)[0])
+        cfg.set({**cfg(), "baseline": 25})
+        source.set(src)
+        ui.modal_remove()
+
     # ---- modals ----
     def show_build(i: int):
         an = a()
@@ -206,11 +240,16 @@ def server(input, output, session):
         import_err.set("")
         ui.modal_show(ui.modal(
             close_button(),
-            ui.HTML('<h2>Import build data</h2><p>CSV format: one row per independent build/test result, oldest first. '
-                    'Use one consistent part family, material, orientation and heat-treatment route. At least 30 rows per '
-                    'machine; all fields required.</p><p><b>Columns:</b> id, machine, strength, oxygen, humidity, '
-                    'temperature, power, speed, stress</p><p>Units: MPa, ppm, %, °C, W, mm/s, MPa. IDs must be unique '
-                    'within a machine. Import replaces the current dataset for this browser session.</p>'
+            ui.HTML('<h2>Import build data</h2>'
+                    '<p><b>Try a test dataset</b> (described in <code>datasets/README.md</code>):</p>'
+                    '<div class="actions samples" style="margin:8px 0 14px;flex-wrap:wrap">'
+                    + "".join(f'<button onclick="fsEvt(\'sample\',\'{k}\')">{lab}</button>' for k, (_, lab) in SAMPLES.items())
+                    + '</div><p><b>Or upload your own CSV:</b> one row per build/test result, oldest first, at least 30 rows '
+                    'per machine. Use one consistent part family, material, orientation and heat-treatment route.</p>'
+                    '<p><b>Required columns:</b> id, machine, strength (MPa).<br><b>Optional columns:</b> oxygen (ppm), '
+                    'humidity (%), temperature (°C), power (W), speed (mm/s), stress (MPa). Leave out any you don\'t '
+                    'measure; blank cells are allowed. IDs must be unique within a machine. Import replaces the current '
+                    'dataset for this browser session.</p>'
                     '<div class="actions" style="margin:14px 0"><a id="download_example" class="shiny-download-link" '
                     'href="" target="_blank" download>Download example</a></div>'),
             ui.input_file("upload", "Choose CSV", accept=[".csv", "text/csv"], multiple=False,
@@ -289,11 +328,7 @@ def server(input, output, session):
         except data.ImportError_ as e:
             import_err.set(str(e))
             return
-        rows.set(parsed)
-        machine.set(data.machine_list(parsed)[0])
-        cfg.set({**cfg(), "baseline": 25})
-        source.set("csv")
-        ui.modal_remove()
+        load_rows(parsed, "csv")
         ui.notification_show(f"Imported {len(parsed)} rows from {files[0]['name']}.", type="message", duration=4)
 
     # ---- downloads ----

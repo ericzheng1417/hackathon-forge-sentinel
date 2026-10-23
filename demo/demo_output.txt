@@ -1,0 +1,59 @@
+FORGE SENTINEL — DEMONSTRATION REPORT
+Settings: LSL 900 MPa · USL 1100 MPa · baseline 25 builds · tests 1,2,3,4,5,6,7,8 + MR rule · Cpk target 1.33
+
+====================================================================================================
+01_stable_capable.csv — Stable and capable process
+====================================================================================================
+  Machine LPBF-A · 50 builds · variables recorded: strength, oxygen, humidity, temperature, power, speed, stress
+    Verdict            : No SPC signals detected — qualification review required
+    Strength           : mean 968.5 · median 969.2 · SD 10.87 · variance 118.1 · CV 1.12% · SE 1.537 MPa
+    Spread             : range 44.1 (942.9–987.0) · Q1 963.4 · Q3 974.8 · IQR 11.4 MPa
+    I chart (baseline) : centre 966.1 · σ 12.05 · LCL 930.0 · UCL 1002.3 · MR̄ 13.59 · MR UCL 44.4
+    Capability         : Cp 2.77 · Cpk 1.89 · Pp 3.07 · Ppk 2.10 (target Cpk ≥ 1.33)
+    Conformance        : 50/50 in spec (100.0%, 95% Wilson 92.9–100.0%)
+    Strength signals   : none
+    Laser power        : 1 signal(s); first at build 12 (Moving range above MR-chart UCL)
+    Residual stress    : 2 signal(s); first at build 43 (Test 3: 4 of 5 beyond zone C)
+    Top associations   : chamber oxygen r = -0.22, laser power r = 0.11, scan speed r = -0.05
+  Machine LPBF-B · 50 builds · variables recorded: strength, oxygen, humidity, temperature, power, speed, stress
+    Verdict            : No SPC signals detected — qualification review required
+    Strength           : mean 958.8 · median 959.2 · SD 10.77 · variance 115.9 · CV 1.12% · SE 1.523 MPa
+    Spread             : range 46.3 (936.3–982.6) · Q1 951.7 · Q3 966.0 · IQR 14.2 MPa
+    I chart (baseline) : centre 956.8 · σ 10.64 · LCL 924.9 · UCL 988.7 · MR̄ 12.00 · MR UCL 39.2
+    Capability         : Cp 3.13 · Cpk 1.84 · Pp 3.10 · Ppk 1.82 (target Cpk ≥ 1.33)
+    Conformance        : 50/50 in spec (100.0%, 95% Wilson 92.9–100.0%)
+    Strength signals   : none
+    Top associations   : relative humidity r = -0.20, residual stress r = 0.08, scan speed r = -0.08
+
+====================================================================================================
+02_oxygen_drift.csv — Chamber seal leak (oxygen drift), then repair
+====================================================================================================
+  Machine LPBF-C · 70 builds · variables recorded: strength, oxygen, humidity, temperature, power, speed, stress
+    Verdict            : Process unstable — capability not demonstrated
+    Strength           : mean 961.5 · median 968.1 · SD 21.60 · variance 466.4 · CV 2.25% · SE 2.581 MPa
+    Spread             : range 96.2 (895.1–991.3) · Q1 954.0 · Q3 975.5 · IQR 21.5 MPa
+    I chart (baseline) : centre 971.5 · σ 10.06 · LCL 941.3 · UCL 1001.6 · MR̄ 11.35 · MR UCL 37.1
+    Capability         : Cp 3.31 · Cpk 2.04 · Pp 1.54 · Ppk 0.95 (target Cpk ≥ 1.33)
+    Conformance        : 67/70 in spec (95.7%, 95% Wilson 88.1–98.5%) · failed: C-056, C-057, C-060
+    Strength signals   : 13 builds; first at build 49 (C-049: Test 1: Beyond zone A; Moving range above MR-chart UCL)
+    Points per test    : Test 1=11, Test 2=11, Test 3=9, Test 4=5, MR=2
+    Chamber oxygen     : 18 signal(s); first at build 44 (Test 1: Beyond zone A; Test 2: 2 of 3 beyond zone B; Test 5: 6 trending)
+    Relative humidity  : 6 signal(s); first at build 46 (Test 5: 6 trending)
+    Laser power        : 4 signal(s); first at build 18 (Test 1: Beyond zone A)
+    Scan speed         : 2 signal(s); first at build 34 (Moving range above MR-chart UCL)
+    Residual stress    : 3 signal(s); first at build 29 (Test 4: 8 on one side)
+    Top associations   : chamber oxygen r = -0.84, relative humidity r = -0.22, laser power r = 0.08
+
+====================================================================================================
+03_strength_only.csv — Powder-lot change, strength-only data
+====================================================================================================
+  Machine LPBF-D · 60 builds · variables recorded: strength
+    Verdict            : Process unstable — capability not demonstrated
+    Strength           : mean 947.9 · median 955.7 · SD 24.98 · variance 623.8 · CV 2.63% · SE 3.224 MPa
+    Spread             : range 92.2 (901.6–993.8) · Q1 925.8 · Q3 968.4 · IQR 42.6 MPa
+    I chart (baseline) : centre 967.4 · σ 10.38 · LCL 936.3 · UCL 998.5 · MR̄ 11.71 · MR UCL 38.3
+    Capability         : Cp 3.21 · Cpk 1.54 · Pp 1.33 · Ppk 0.64 (target Cpk ≥ 1.33)
+    Conformance        : 60/60 in spec (100.0%, 95% Wilson 94.0–100.0%)
+    Strength signals   : 25 builds; first at build 36 (D-036: Test 1: Beyond zone A; Moving range above MR-chart UCL)
+    Points per test    : Test 1=25, Test 2=24, Test 3=23, Test 4=18, Test 7=2, MR=1
+    Top associations   : none (only strength recorded)

@@ -4,10 +4,16 @@ Forge Sentinel is a web dashboard that helps a quality engineer answer one quest
 
 > **Is our 3D-metal-printing process producing parts that are consistently strong enough, and if not, what changed?**
 
-It was built for a specific case: titanium brackets made by an aerospace supplier. You give it a
-spreadsheet (CSV) of past builds, one row per build. Each row has the part's measured strength and
-the printer conditions during that build, such as oxygen level, humidity and laser power. The
-dashboard then:
+**Who it's for:** the quality or process engineer at an aerospace contractor that 3D-prints
+titanium (Ti-6Al-4V) brackets by laser powder bed fusion and is failing the client's tensile-strength
+acceptance tests.
+
+**What you give it:** a spreadsheet (CSV) of past builds, one row per build. Only three columns are
+required, and the contractor already has all of them: build ID, machine, and the tensile strength from
+the client test. Printer conditions you happen to log (chamber oxygen, humidity, plate temperature,
+laser power, scan speed, residual stress) are optional; each one you add unlocks root-cause analysis.
+
+**What the dashboard does:**
 
 - summarises every measurement with standard Lean Six Sigma statistics (mean, median, standard
   deviation, variance, CV, standard error, range, quartiles),
@@ -17,7 +23,18 @@ dashboard then:
 - shows which printer conditions move together with strength, so you know where to look first,
 - gives you a simple list for tracking investigations and fixes.
 
-The app comes loaded with made-up demo data, so you can try it right away without your own data.
+The app opens with built-in demo data. **Three test datasets** (stable process, oxygen-leak failure,
+strength-only data) can be loaded with one click from **Import data**.
+
+### Documentation
+
+| Document | What's in it |
+|---|---|
+| [DEMO.md](DEMO.md) | Step-by-step demonstration on the three test datasets, with screenshots |
+| [datasets/README.md](datasets/README.md) | The test datasets: scenario, expected results, how they were generated |
+| [datasets/CODEBOOK.md](datasets/CODEBOOK.md) | Every variable: meaning, unit, how it's measured, required or optional |
+| [docs/REFERENCE.md](docs/REFERENCE.md) | Function reference: inputs, parameters, outputs and formulas |
+| This README | What the tool is, how to run it, deploy it and use your own data |
 
 > ⚠️ **This is a decision-support prototype.** It does not certify parts, approve them for flight,
 > or replace a validated quality system. Treat its results as prompts to investigate, not verdicts.
@@ -143,24 +160,27 @@ After deploying, open the app in Connect and use the **Access** tab to choose wh
 
 ## Using your own data
 
-Click **Import data** and upload a CSV with these exact column headers:
+Click **Import data** and upload a CSV with these column headers:
 
-| Column | Meaning | Unit |
-|---|---|---|
-| `id` | Build ID (unique within each machine) | text |
-| `machine` | Printer name, e.g. `LPBF-01` | text |
-| `strength` | Measured tensile strength | MPa |
-| `oxygen` | Oxygen in the build chamber | ppm |
-| `humidity` | Relative humidity | % |
-| `temperature` | Build plate temperature | °C |
-| `power` | Laser power | W |
-| `speed` | Laser scan speed | mm/s |
-| `stress` | Residual stress | MPa |
+| Column | Required? | Meaning | Unit |
+|---|---|---|---|
+| `id` | **required** | Build ID (unique within each machine) | text |
+| `machine` | **required** | Printer name, e.g. `LPBF-01` | text |
+| `strength` | **required** | Measured tensile strength | MPa |
+| `oxygen` | optional | Oxygen in the build chamber | ppm |
+| `humidity` | optional | Relative humidity | % |
+| `temperature` | optional | Build plate temperature | °C |
+| `power` | optional | Laser power | W |
+| `speed` | optional | Laser scan speed | mm/s |
+| `stress` | optional | Residual stress | MPa |
+
+Full definitions and how each is measured are in [datasets/CODEBOOK.md](datasets/CODEBOOK.md).
 
 Rules:
 
 - **Rows must be in the order the builds happened**, oldest first. The app uses row order as time order.
-- **At least 30 rows per machine.** Every cell must be filled in. Maximum file size is 2 MB.
+- **At least 30 rows per machine.** Optional columns can be left out entirely, or blank for some builds.
+  Other columns (such as a build date) are ignored. Maximum file size is 2 MB.
 - **One row per build.** Several test samples from the same build are not independent results.
 - Keep each machine's data to one part type, material and process route, so you compare like with like.
 
@@ -201,6 +221,10 @@ forge_sentinel/
   views.py                 Builds the HTML for each page
 www/style.css              Visual styling
 python/analyze.py          Command-line version of the analysis
+datasets/                  3 test datasets, their generator, README and codebook
+demo/                      run_demo.py (text demonstration) and its saved output
+docs/                      Function reference and demo screenshots
+DEMO.md                    Demonstration walkthrough
 tests/                     Automated checks
 manifest.json              Deployment file for Posit Connect
 requirements.txt           Python packages to install
@@ -216,15 +240,32 @@ python -m unittest discover tests
 
 The tests check the statistics against known results, including reference output from the original
 JavaScript version of this tool, each of the 8 special-cause tests on hand-built patterns, the
-descriptive statistics and Cp/Cpk formulas. They also cover CSV validation, page rendering and the
-command-line tool.
+descriptive statistics and Cp/Cpk formulas. They also cover CSV validation, optional columns, page
+rendering and the command-line tool. `tests/test_datasets.py` regenerates the test datasets, checks
+they match the committed files byte for byte, and checks every result quoted in [DEMO.md](DEMO.md).
+
+## Reproducing the results
+
+Everything in this repository can be regenerated from the code:
+
+```
+pip install -r requirements.txt          # only needed for the dashboard
+python datasets/generate_datasets.py     # recreates the 3 test CSVs (fixed seeds)
+python demo/run_demo.py                  # recomputes every number in DEMO.md
+python -m unittest discover tests        # 36 automated checks
+shiny run app.py                         # the dashboard
+```
+
+The analysis engine, dataset generator, demo script, command-line tool and tests use only the Python
+standard library (Python 3.10+). Only the dashboard needs the `shiny` package. The Posit Connect
+deployment uses Python 3.12.4 (see `manifest.json`).
 
 ---
 
 ## Limitations
 
-- **Demo data is fake.** The two demo machines are synthetic: LPBF-01 deliberately gets worse near
-  the end, and LPBF-02 stays stable. Neither represents real Ti-6Al-4V material properties.
+- **Demo and test data are synthetic.** They're designed to be plausible and to show specific
+  scenarios, but they are not real Ti-6Al-4V measurements and their effect sizes are illustrative.
 - **Default limits are examples**, not aerospace requirements. Use the values your customer or
   specification requires.
 - **Not validated** for part qualification, release, fatigue life or structural reliability. The pass-rate

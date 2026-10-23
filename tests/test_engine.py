@@ -162,7 +162,9 @@ class CSVImport(unittest.TestCase):
     def test_rejections(self):
         good = data.to_csv(data.seed_rows())
         bad = {
-            "missing header": good.replace('"stress"', '"stres"', 1),
+            "missing required header": good.replace('"strength"', '"strenght"', 1),
+            "blank strength": data.to_csv([dict(r, strength=None) if i == 3 else r
+                                           for i, r in enumerate(data.seed_rows())]),
             "non-numeric": good.replace('"965', '"abc', 1),
             "too few rows": "\n".join(good.splitlines()[:20]),
             "duplicate id": good.replace('"B1-002"', '"B1-001"', 1),
@@ -170,6 +172,40 @@ class CSVImport(unittest.TestCase):
         for name, text in bad.items():
             with self.subTest(name), self.assertRaises(data.ImportError_):
                 data.parse_csv(text.encode())
+
+
+class OptionalColumns(unittest.TestCase):
+    def test_strength_only_csv(self):
+        text = "id,machine,strength\n" + "\n".join(f"B{i},M1,{950 + (i * 7) % 23}" for i in range(40))
+        rows = data.parse_csv(text.encode())
+        self.assertIsNone(rows[0]["oxygen"])
+        self.assertEqual(engine.available_vars(rows), ["strength"])
+        self.assertEqual(engine.associations(rows), [])
+        a = engine.analyze_stream(rows, usl=1100)
+        self.assertEqual(a.n, 40)
+
+    def test_blank_cells_are_skipped_per_variable(self):
+        rows = [r for r in data.seed_rows() if r["machine"] == "LPBF-01"]
+        rows = [dict(r, oxygen=None) if i % 5 == 0 else dict(r) for i, r in enumerate(rows)]
+        rows = data.parse_csv(data.to_csv(rows).encode())
+        am = engine.analyze_stream(rows, "oxygen")
+        self.assertEqual(am.n, 48)
+        self.assertEqual(am.n_missing, 12)
+        self.assertEqual(am.idx[:3], [1, 2, 3])                  # positions map back to the full stream
+        assoc = {d["v"]: d for d in engine.associations(rows)}
+        self.assertEqual(assoc["oxygen"]["n"], 48)
+        self.assertEqual(assoc["humidity"]["n"], 60)
+
+    def test_pages_render_with_strength_only(self):
+        from forge_sentinel import views
+        text = "id,machine,strength\n" + "\n".join(f"B{i},M1,{950 + (i * 7) % 23}" for i in range(40))
+        rows = data.parse_csv(text.encode())
+        a = engine.analyze_stream(rows)
+        desc = {v: engine.describe([r.get(v) for r in rows]) for v in engine.available_vars(rows)}
+        for p in views.PAGES:
+            html = views.render_page(p, a, a, dict(engine.DEFAULT_CONFIG), {}, desc)
+            self.assertTrue(html, p)
+        self.assertIn("Only strength was provided", views.render_page("Parameter analysis", a, a, dict(engine.DEFAULT_CONFIG), {}))
 
 
 class Charts(unittest.TestCase):

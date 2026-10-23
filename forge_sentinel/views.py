@@ -11,7 +11,7 @@ from html import escape as esc
 
 from . import charts
 from .charts import fmt, num
-from .engine import SPECIAL_TESTS, VARS, Analysis, associations, decision_text, wilson
+from .engine import SPECIAL_TESTS, VARS, Analysis, associations, available_vars, decision_text, wilson
 
 PAGES = ["Overview", "Process control", "Statistics", "Capability", "Parameter analysis", "Build records",
          "Corrective actions", "Methods"]
@@ -118,7 +118,13 @@ def _bar_width(r: float) -> float:
     return abs(r) * 100 if math.isfinite(r) else 0
 
 
+NO_PROCESS_DATA = ('<div class="empty" style="padding:24px">Only strength was provided. Add process columns '
+                   '(oxygen, humidity, temperature, power, speed, stress) to see which conditions move with strength.</div>')
+
+
 def drivers(a: Analysis) -> str:
+    if not associations(a.records):
+        return NO_PROCESS_DATA
     return "".join(
         f'<div class="driver"><div class="driverhead">{VARS[d["v"]][0]}<span>r = {fmt(d["r"])}</span></div>'
         f'<div class="bar"><div style="width:{_bar_width(d["r"]):.1f}%"></div></div></div>'
@@ -129,8 +135,8 @@ def drivers(a: Analysis) -> str:
 
 def overview(a: Analysis, cfg: dict) -> str:
     pass_pct = 100 * a.passes / a.n
-    cap_note = (f"Target ≥ {num(cfg['target'])} · Cp {fmt(a.cap['Cp'])}" if a.usl is not None
-                else f"Target ≥ {num(cfg['target'])} · one-sided (Cpl)")
+    cap_note = (f"Ppk {fmt(a.cap['Ppk'])} (overall spread) · target ≥ {num(cfg['target'])}"
+                + ("" if a.usl is not None else " · one-sided"))
     metrics = (
         metric_card("Observed pass rate", fmt(pass_pct, 1) + "<small> %</small>",
                     f"{a.passes} of {a.n} strength results pass", "Measured")
@@ -160,8 +166,9 @@ def overview(a: Analysis, cfg: dict) -> str:
             '<p>Correlation is exploratory, not proof of cause.</p></section></div>')
 
 
-def variable_select(v: str) -> str:
-    opts = "".join(f'<option value="{k}" {"selected" if k == v else ""}>{lab}</option>' for k, (lab, _) in VARS.items())
+def variable_select(v: str, avail: list[str] | None = None) -> str:
+    keys = avail or list(VARS)
+    opts = "".join(f'<option value="{k}" {"selected" if k == v else ""}>{VARS[k][0]}</option>' for k in keys)
     return f'<select aria-label="Variable" onchange="fsMetric(this.value)">{opts}</select>'
 
 
@@ -184,12 +191,17 @@ def tests_reference(am: Analysis, mr_rule: bool) -> str:
             f'<th>WHAT IT USUALLY SIGNALS</th><th>POINTS FLAGGED</th></tr></thead><tbody>{rows}</tbody></table></div>')
 
 
-def control(am: Analysis, cfg: dict) -> str:
+def missing_note(am: Analysis) -> str:
+    return (f' {am.n_missing} build(s) without a recorded {VARS[am.metric][0].lower()} are skipped.'
+            if am.n_missing else "")
+
+
+def control(am: Analysis, cfg: dict, avail: list[str] | None = None) -> str:
     v = am.metric
     unit = VARS[v][1]
     if am.flags:
         rows = "".join(
-            f'<tr><td><button class="link" onclick="fsBuild({f.index})">{esc(str(am.records[f.index]["id"]))}</button></td>'
+            f'<tr><td><button class="link" onclick="fsBuild({am.idx[f.index]})">{esc(str(am.records[f.index]["id"]))}</button></td>'
             f'<td>{"Baseline review" if f.index < am.baseline else "Monitoring"}</td>'
             f'<td>{num(am.records[f.index][v])} {unit}</td><td>{" · ".join(f.reasons)}</td></tr>'
             for f in reversed(am.flags))
@@ -199,14 +211,14 @@ def control(am: Analysis, cfg: dict) -> str:
     sig = am.sigma
     return ('<div class="fs-card"><div class="cardhead"><div><h2>Individuals (I) chart</h2>'
             '<p>Baseline and chronological order are preserved for the selected machine. Zones A, B and C are marked on the right.</p></div>'
-            f'{variable_select(v)}</div>{charts.control_chart(am, cfg["lsl"], am.usl)}'
+            f'{variable_select(v, avail)}</div>{charts.control_chart(am, cfg["lsl"], am.usl)}'
             f'<div class="statsrow"><div><span>CENTRE (BASELINE MEAN)</span><strong>{fmt(am.center, 1)}</strong></div>'
             f'<div><span>BASELINE σ (MR̄ / 1.128)</span><strong>{fmt(sig, 2)}</strong></div>'
             f'<div><span>LCL / UCL</span><strong>{fmt(am.lcl, 1)} / {fmt(am.ucl, 1)}</strong></div>'
             f'<div><span>MONITORING SIGNALS</span><strong>{len(am.post)}</strong></div></div>'
             f'<p>Zone C: within ±1σ ({fmt(am.center - sig, 1)}–{fmt(am.center + sig, 1)}) · Zone B: 1–2σ · '
             f'Zone A: 2–3σ ({fmt(am.center - 3 * sig, 1)}–{fmt(am.center + 3 * sig, 1)}). Limits are frozen from the first '
-            f'{am.baseline} builds (shaded). Click a point for build detail.</p></div>'
+            f'{am.baseline} builds (shaded). Click a point for build detail.{missing_note(am)}</p></div>'
             '<div class="fs-card" style="margin-top:20px"><div class="cardhead"><div><h2>Moving range (MR) chart</h2>'
             '<p>Absolute difference between consecutive builds · |xᵢ − xᵢ₋₁|</p></div></div>'
             f'{charts.mr_chart(am)}<div class="statsrow"><div><span>MR̄ (BASELINE)</span><strong>{fmt(am.mr_bar, 2)}</strong></div>'
@@ -229,7 +241,7 @@ STAT_ROWS = [  # key, label, short column header, decimals, suffix
 ]
 
 
-def statistics_page(am: Analysis, all_desc: dict) -> str:
+def statistics_page(am: Analysis, all_desc: dict, avail: list[str] | None = None) -> str:
     v = am.metric
     label, unit = VARS[v]
     d = am.desc
@@ -249,12 +261,13 @@ def statistics_page(am: Analysis, all_desc: dict) -> str:
         f'<tr class="{"sel" if k == v else ""}"><td><button class="link" onclick="fsMetric({js(k)})">{VARS[k][0]}</button>'
         f' <span style="color:#96a19c">{VARS[k][1]}</span></td>'
         + "".join(f"<td>{fmt(all_desc[k][s], dec)}{suf}</td>" for s, _, _, dec, suf in STAT_ROWS) + "</tr>"
-        for k in VARS)
+        for k in VARS if k in all_desc)
     return ('<div class="fs-card" style="margin-bottom:20px"><div class="cardhead"><div><h2>Descriptive statistics</h2>'
-            f'<p>{label} · {am.n} builds · selected machine · sample statistics (n − 1)</p></div>{variable_select(v)}</div></div>'
+            f'<p>{label} · {am.n} builds · selected machine · sample statistics (n − 1).{missing_note(am)}</p></div>'
+            f'{variable_select(v, avail)}</div></div>'
             f'<div class="metrics">{cards1}</div><div class="metrics">{cards2}</div>'
             f'<div class="grid"><section class="fs-card"><h2>Spread and shape</h2><p>Box = Q1 to Q3, line = median, '
-            f'◆ = mean, whiskers = 1.5 × IQR; red points fall outside the whiskers.</p>{charts.boxplot(am.x, d, f"{label} ({unit})")}'
+            f'◆ = mean, whiskers = 1.5 × IQR; red points fall outside the whiskers.</p>{charts.boxplot(am.x, d, f"{label} ({unit})", am.idx)}'
             f'<h3>Distribution</h3>{charts.histogram(am.x, f"{label} ({unit})", bins=24, width=760)}</section>'
             f'<section class="fs-card"><h2>Summary · {label}</h2>{detail}</section></div>'
             '<div class="fs-card"><h2>All variables</h2><p>Click a variable to inspect it above. SD = standard deviation, VAR = variance, '
@@ -306,27 +319,41 @@ def capability(a: Analysis, cfg: dict) -> str:
             'and fatigue or life-test data, including censored results.</p></div>')
 
 def parameters(a: Analysis, cfg: dict) -> str:
-    bars = "".join(
-        f'<div class="driver"><div class="driverhead">{VARS[d["v"]][0]}<strong>{fmt(d["r"])}</strong></div>'
-        f'<div class="bar"><div style="width:{_bar_width(d["r"]):.1f}%;background:{"#bf8b78" if d["r"] < 0 else "#6f9d8a"}"></div></div></div>'
-        for d in associations(a.records))
-    ox = sum(r["oxygen"] > cfg["oxygen"] for r in a.records)
-    hu = sum(r["humidity"] > cfg["humidity"] for r in a.records)
+    assoc = associations(a.records)
+    if assoc:
+        bars = "".join(
+            f'<div class="driver"><div class="driverhead">{VARS[d["v"]][0]}<strong>{fmt(d["r"])}</strong></div>'
+            f'<div class="bar"><div style="width:{_bar_width(d["r"]):.1f}%;background:{"#bf8b78" if d["r"] < 0 else "#6f9d8a"}"></div></div></div>'
+            for d in assoc)
+    else:
+        bars = NO_PROCESS_DATA
+    excursions = ""
+    for var, key, unit in (("oxygen", "oxygen", " ppm"), ("humidity", "humidity", "%")):
+        vals = [r[var] for r in a.records if r.get(var) is not None]
+        label = VARS[var][0].split()[-1].capitalize()
+        excursions += (f'<div class="keyline"><span>{label} &gt; {num(cfg[key])}{unit}</span>'
+                       f'<strong>{sum(v > cfg[key] for v in vals)} builds</strong></div>' if vals else
+                       f'<div class="keyline"><span>{label} &gt; {num(cfg[key])}{unit}</span><strong>Not recorded</strong></div>')
+    if assoc:
+        top = assoc[0]["v"]
+        scatter = (f'<div class="fs-card"><h2>{VARS[top][0]} versus tensile strength</h2>'
+                   f'<p>Strongest association in this stream (r = {fmt(assoc[0]["r"])}).</p>{charts.scatter(a, a.lsl, top)}'
+                   '<p>Each point is one matched build and test record. Red points fail the strength specification. '
+                   'Click a point for build detail.</p></div>')
+    else:
+        scatter = ""
     return ('<div class="grid"><div class="fs-card"><h2>Associations with tensile strength</h2>'
-            f'<p>Pearson correlation · {a.n} matched records · selected machine</p>{bars}'
+            f'<p>Pearson correlation · {a.n} builds · selected machine · pairwise-complete records</p>{bars}'
             '<p>Common time trends and confounding can create strong correlations. Use controlled trials and '
             'metallurgical evidence to test a suspected mechanism.</p></div><div class="fs-card"><h2>Environmental excursions</h2>'
-            f'<div class="keyline"><span>Oxygen &gt; {num(cfg["oxygen"])} ppm</span><strong>{ox} builds</strong></div>'
-            f'<div class="keyline"><span>Humidity &gt; {num(cfg["humidity"])}%</span><strong>{hu} builds</strong></div>'
+            f'{excursions}'
             '<p>Thresholds are illustrative engineering alarms, editable in Configure. Recorded values represent one '
             'build-level summary; layer-level peaks and exposure duration are not captured.</p>'
             '<h3>Recommended traceability additions</h3><p>Powder lot and reuse count · particle size / chemistry · gas flow · '
             'melt-pool intensity · layer thickness · build orientation and location · heat-treatment/HIP cycle · surface '
             'finish · porosity · test specimen and instrument ID.</p>'
             '<button onclick="fsGo(\'Corrective actions\')">Open investigation workspace ↗</button></div></div>'
-            f'<div class="fs-card"><h2>Oxygen versus tensile strength</h2>{charts.scatter(a, a.lsl)}'
-            '<p>Each point is one matched build and test record. Red points fail the strength specification. '
-            'Click a point for build detail.</p></div>')
+            + scatter)
 
 
 def records(a: Analysis) -> str:
@@ -413,12 +440,15 @@ def build_detail(a: Analysis, i: int) -> str:
 
 
 def render_page(page: str, a: Analysis, am: Analysis, cfg: dict, actions: dict, all_desc: dict | None = None) -> str:
+    """HTML for one page. `a` = strength analysis of the full stream; `am` = analysis of the
+    variable selected on Process control / Statistics; `all_desc` = describe() per variable."""
+    avail = available_vars(a.records)
     if page == "Overview":
         return overview(a, cfg)
     if page == "Process control":
-        return control(am, cfg)
+        return control(am, cfg, avail)
     if page == "Statistics":
-        return statistics_page(am, all_desc or {})
+        return statistics_page(am, all_desc or {}, avail)
     if page == "Capability":
         return capability(a, cfg)
     if page == "Parameter analysis":

@@ -16,7 +16,9 @@ def fmt(n, d: int = 2) -> str:
 
 
 def num(v) -> str:
-    """Display a stored measurement without a trailing .0."""
+    """Display a stored measurement without a trailing .0; blank values show as —."""
+    if v is None or v == "":
+        return "—"
     if isinstance(v, float) and v.is_integer():
         return str(int(v))
     return str(v)
@@ -69,7 +71,7 @@ def control_chart(a: Analysis, lsl: float, usl: float | None = None, zones: bool
         rid = escape(str(a.records[i]["id"]))
         why = (" — " + "; ".join(flagged[i])) if hit else ""
         parts.append(f'<circle cx="{_c(X(i))}" cy="{_c(Y(y))}" r="{3.6 if hit else 2.6}" '
-                     f'fill="{"#c66955" if hit else "#427e6d"}" onclick="fsBuild({i})">'
+                     f'fill="{"#c66955" if hit else "#427e6d"}" onclick="fsBuild({a.idx[i]})">'
                      f'<title>{rid}: {num(a.records[i][v])} {unit}{escape(why)}</title></circle>')
     for i in sorted({0, n // 4, n // 2, int(n * 0.75), n - 1}):
         parts.append(f'<text x="{_c(X(i) - 7)}" y="{H - 5}">{i + 1}</text>')
@@ -103,7 +105,7 @@ def mr_chart(a: Analysis) -> str:
     for i, m in pts:
         hit = m > a.mr_ucl
         parts.append(f'<circle cx="{_c(X(i))}" cy="{_c(Y(m))}" r="{3.4 if hit else 2.2}" fill="{"#c66955" if hit else "#7aa598"}" '
-                     f'onclick="fsBuild({i})"><title>{escape(str(a.records[i]["id"]))}: MR {fmt(m, 1)} {unit}</title></circle>')
+                     f'onclick="fsBuild({a.idx[i]})"><title>{escape(str(a.records[i]["id"]))}: MR {fmt(m, 1)} {unit}</title></circle>')
     return (f'<svg class="chart" viewBox="0 0 {W} {H}" role="img" aria-label="Moving range chart">'
             + "".join(parts) + "</svg>")
 
@@ -143,7 +145,7 @@ def histogram(x: list[float], label: str, lsl: float | None = None, usl: float |
             f'<text x="{25 + pw}" y="140" text-anchor="end">{fmt(hi, 0)}</text></svg>')
 
 
-def boxplot(x: list[float], desc: dict, label: str) -> str:
+def boxplot(x: list[float], desc: dict, label: str, idx: list[int] | None = None) -> str:
     """Horizontal box-and-whisker (1.5×IQR whiskers) with the individual points underneath."""
     W, H, left, right = 760, 130, 30, 30
     lo, hi = desc["min"], desc["max"]
@@ -168,7 +170,7 @@ def boxplot(x: list[float], desc: dict, label: str) -> str:
         outlier = v < fence_lo or v > fence_hi
         jitter = 84 + (i * 7919 % 17) - 8
         parts.append(f'<circle cx="{_c(X(v))}" cy="{jitter}" r="2.6" fill="{"#c66955" if outlier else "#9bbcaf"}" '
-                     f'opacity=".85" onclick="fsBuild({i})"><title>{fmt(v, 1)}</title></circle>')
+                     f'opacity=".85" onclick="fsBuild({idx[i] if idx else i})"><title>{fmt(v, 1)}</title></circle>')
     for v, name in ((q1, "Q1"), (med, "Median"), (q3, "Q3")):
         parts.append(f'<text x="{_c(X(v))}" y="14" text-anchor="middle">{name} {fmt(v, 1)}</text>')
     parts.append(f'<text x="{left}" y="{H - 4}">{fmt(lo, 0)}</text>'
@@ -178,23 +180,28 @@ def boxplot(x: list[float], desc: dict, label: str) -> str:
             + "".join(parts) + "</svg>")
 
 
-def scatter(a: Analysis, lsl: float) -> str:
-    recs = a.records
-    xs = [float(r["oxygen"]) for r in recs]
-    ys = [float(r["strength"]) for r in recs]
-    lo, hi = min(xs) - 5, max(xs) + 5
+def scatter(a: Analysis, lsl: float, var: str = "oxygen") -> str:
+    """Scatter of a process variable (x) against strength (y); rows missing `var` are skipped."""
+    pts_in = [(i, r) for i, r in enumerate(a.records) if r.get(var) is not None]
+    xs = [float(r[var]) for _, r in pts_in]
+    ys = [float(r["strength"]) for _, r in pts_in]
+    pad = (max(xs) - min(xs)) * 0.05 or 1
+    lo, hi = min(xs) - pad, max(xs) + pad
     yl, yh = min(*ys, lsl) - 10, max(ys) + 10
     X = lambda x: 50 + (x - lo) / (hi - lo) * 650
     Y = lambda y: 230 - (y - yl) / (yh - yl) * 200
+    label, unit = VARS[var]
+    dec = 0 if hi - lo > 20 else 1
     grid = "".join(
         f'<line x1="50" x2="700" y1="{_c(Y(yl + (yh - yl) * i / 4))}" y2="{_c(Y(yl + (yh - yl) * i / 4))}" stroke="#e5ece7"/>'
         f'<text x="5" y="{_c(Y(yl + (yh - yl) * i / 4))}">{fmt(yl + (yh - yl) * i / 4, 0)}</text>'
-        f'<text x="{_c(X(lo + (hi - lo) * i / 4))}" y="250">{fmt(lo + (hi - lo) * i / 4, 0)}</text>'
+        f'<text x="{_c(X(lo + (hi - lo) * i / 4))}" y="250" text-anchor="middle">{fmt(lo + (hi - lo) * i / 4, dec)}</text>'
         for i in range(5))
     pts = "".join(
         f'<circle cx="{_c(X(x))}" cy="{_c(Y(y))}" r="4" fill="{"#bd6c56" if a.is_fail(r) else "#628e7e"}" opacity=".8" '
-        f'onclick="fsBuild({i})"><title>{escape(str(r["id"]))} · {num(r["oxygen"])} ppm · {num(r["strength"])} MPa</title></circle>'
-        for i, (r, x, y) in enumerate(zip(recs, xs, ys)))
-    return (f'<svg class="chart" viewBox="0 0 760 280" role="img" aria-label="Oxygen and tensile strength scatterplot">'
+        f'onclick="fsBuild({a.idx[i] if a.idx else i})"><title>{escape(str(r["id"]))} · {num(r[var])} {unit} · {num(r["strength"])} MPa</title></circle>'
+        for (i, r), x, y in zip(pts_in, xs, ys))
+    return (f'<svg class="chart" viewBox="0 0 760 280" role="img" aria-label="{escape(label)} and tensile strength scatterplot">'
             f'{grid}<line x1="50" x2="700" y1="{_c(Y(lsl))}" y2="{_c(Y(lsl))}" stroke="#bd6c56" stroke-dasharray="5 4"/>'
-            f'{pts}<text x="330" y="275">Oxygen (ppm)</text><text x="5" y="15">Strength (MPa)</text></svg>')
+            f'{pts}<text x="375" y="275" text-anchor="middle">{escape(label)} ({unit})</text>'
+            f'<text x="5" y="15">Strength (MPa)</text></svg>')

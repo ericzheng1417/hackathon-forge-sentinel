@@ -28,6 +28,9 @@ VARS: dict[str, tuple[str, str]] = {
 }
 FIELDS = tuple(VARS)
 COLUMNS = ("id", "machine", *FIELDS)
+REQUIRED_COLUMNS = ("id", "machine", "strength")          # the only inputs a contractor must supply
+OPTIONAL_FIELDS = tuple(v for v in FIELDS if v != "strength")
+MIN_VALUES = 10   # a variable needs at least this many recorded values to be charted or correlated
 
 ALL_TESTS = (1, 2, 3, 4, 5, 6, 7, 8)
 DEFAULT_CONFIG = {
@@ -78,12 +81,24 @@ def _finite(v) -> bool:
 
 # -- descriptive statistics -----------------------------------------------
 
-def describe(values: list[float]) -> dict:
+def present(v) -> bool:
+    """True if a measurement was recorded (optional columns may be blank → None)."""
+    return v is not None and v != ""
+
+
+def available_vars(records: list[dict]) -> list[str]:
+    """Variables with enough recorded values to analyse. Strength is always included."""
+    return [v for v in FIELDS
+            if v == "strength" or sum(present(r.get(v)) for r in records) >= MIN_VALUES]
+
+
+def describe(values: list) -> dict:
     """Lean Six Sigma descriptive summary (sample statistics, n−1 denominator).
 
-    Quartiles use the inclusive method (same as Excel QUARTILE.INC / numpy default).
+    Blank values (None) are ignored. Quartiles use the inclusive method
+    (same as Excel QUARTILE.INC / numpy default).
     """
-    x = [float(v) for v in values]
+    x = [float(v) for v in values if present(v)]
     n = len(x)
     if n == 0:
         raise ValueError("No values to describe")
@@ -190,6 +205,8 @@ class Signal:
 
 @dataclass
 class Analysis:
+    """Result of analyze_stream. `records` are the rows that have the metric recorded;
+    `idx[i]` maps position i back to the row's position in the full machine stream."""
     records: list[dict]
     metric: str
     x: list[float]
@@ -211,6 +228,8 @@ class Analysis:
     cap: dict = field(default_factory=dict)
     desc: dict = field(default_factory=dict)
     fails: list[dict] = field(default_factory=list)
+    idx: list[int] = field(default_factory=list)
+    n_missing: int = 0
 
     @property
     def n(self) -> int:
@@ -267,11 +286,28 @@ def _reason(t) -> str:
 def analyze_stream(records: list[dict], metric: str = "strength", lsl: float = 900, baseline: int = 25,
                    target: float = 1.33, usl: float | None = None, tests=ALL_TESTS,
                    mr_rule: bool = True) -> Analysis:
-    """I-MR SPC for one ordered machine stream, plus strength capability and descriptives."""
+    """I-MR SPC for one ordered machine stream, plus strength capability and descriptives.
+
+    records  : rows for ONE machine in build order; each needs id and strength, other
+               variables are optional (None/blank rows are skipped for that metric only)
+    metric   : variable to chart (a key of VARS)
+    lsl, usl : strength specification limits in MPa (usl=None → one-sided)
+    baseline : number of initial builds that freeze the centre line and limits
+               (reduced automatically if the metric has fewer recorded values)
+    target   : Cpk target used in the verdict
+    tests    : which of the 8 special-cause tests to apply
+    mr_rule  : also flag moving ranges above the MR-chart UCL
+    """
     if metric not in VARS:
         raise ValueError(f"Unknown metric {metric!r}")
-    if not 2 <= baseline <= len(records):
-        raise ValueError("Baseline must contain at least 2 builds and not exceed the record count")
+    full = records
+    idx = [i for i, r in enumerate(full) if present(r.get(metric))]
+    records = [full[i] for i in idx]
+    if len(records) < 3:
+        raise ValueError(f"{VARS[metric][0]} has fewer than 3 recorded values")
+    baseline = min(baseline, len(records) - 1)
+    if baseline < 2:
+        raise ValueError("Baseline must contain at least 2 builds")
     tests = tuple(sorted(int(t) for t in tests if int(t) in SPECIAL_TESTS))
     x = [float(r[metric]) for r in records]
     b = x[:baseline]
@@ -293,12 +329,12 @@ def analyze_stream(records: list[dict], metric: str = "strength", lsl: float = 9
     overall = st.stdev(x) if len(x) > 1 else math.nan
     if usl is not None and usl <= lsl:
         usl = None
-    s = [float(r["strength"]) for r in records]
-    s_center_sigma = sigma if metric == "strength" else (
-        st.fmean(abs(v - u) for u, v in zip(s[:baseline], s[1:baseline])) / D2)
+    s = [float(r["strength"]) for r in full]
+    sb = s[:min(baseline, len(s) - 1)] if metric != "strength" else s[:baseline]
+    s_center_sigma = sigma if metric == "strength" else st.fmean(abs(v - u) for u, v in zip(sb, sb[1:])) / D2
     cap = capability(st.fmean(s), s_center_sigma, st.stdev(s) if len(s) > 1 else math.nan, lsl, usl)
     a = Analysis(records, metric, x, baseline, center, mr_bar, sigma, lcl, ucl, flags, avg, overall, lsl,
-                 target, usl, tests, mr, mr_ucl, cap, describe(x))
+                 target, usl, tests, mr, mr_ucl, cap, describe(x), idx=idx, n_missing=len(full) - len(records))
     a.fails = [r for r in records if a.is_fail(r)]
     return a
 
@@ -319,9 +355,16 @@ def pearson(a: list[float], b: list[float]) -> float:
 
 
 def associations(records: list[dict]) -> list[dict]:
-    """Correlation of each process variable with strength, strongest first."""
-    s = [float(r["strength"]) for r in records]
-    out = [{"v": v, "r": pearson(s, [float(r[v]) for r in records])} for v in FIELDS if v != "strength"]
+    """Pearson correlation of each recorded process variable with strength, strongest first.
+
+    Uses pairwise-complete rows; variables with fewer than MIN_VALUES pairs are skipped.
+    Each item: {"v": variable key, "r": correlation, "n": pairs used}.
+    """
+    out = []
+    for v in OPTIONAL_FIELDS:
+        pairs = [(float(r["strength"]), float(r[v])) for r in records if present(r.get(v))]
+        if len(pairs) >= MIN_VALUES:
+            out.append({"v": v, "r": pearson([p[0] for p in pairs], [p[1] for p in pairs]), "n": len(pairs)})
     return sorted(out, key=lambda d: -abs(d["r"]) if math.isfinite(d["r"]) else 0)
 
 
@@ -362,7 +405,7 @@ def report(a: Analysis, *, source: str, machine: str, config: dict, actions: dic
         "statistics": {"n": a.n, "mean": a.avg, "baseline_mean": a.center, "baseline_sigma": a.sigma,
                        "overall_sd": a.overall_sd, "Cpl": a.cpl, "Ppl": a.ppl,
                        "failed_strength_tests": len(a.fails)},
-        "descriptive": {v: describe([r[v] for r in a.records]) for v in FIELDS},
+        "descriptive": {v: describe([r.get(v) for r in a.records]) for v in available_vars(a.records)},
         "capability": a.cap,
         "control_chart": {"center": a.center, "sigma": a.sigma, "lcl": a.lcl, "ucl": a.ucl,
                           "mr_bar": a.mr_bar, "mr_ucl": a.mr_ucl, "tests_applied": list(a.tests)},
