@@ -245,10 +245,11 @@ variable to its `describe()` output. `build_detail(a, i)` builds the pop-up for 
 |---|---|
 | reactive state | `rows`, `source`, `page`, `machine`, `metric`, `cfg` (one copy per browser session) |
 | `stream()`, `a()`, `am()`, `avail()` | the selected machine's rows, the strength analysis, the selected-variable analysis, the recorded variables |
-| `input.fs_evt` | a single event channel: `nav`, `machine`, `metric`, `build`, `open`, `apply_config`, `sample`, `restore_demo`, `action` |
+| `input.fs_evt` | a single event channel: `nav`, `machine`, `metric`, `build`, `open` (`import`, `config` or `export` dialog), `apply_config`, `sample`, `restore_demo`, `action`, `close_modal` |
+| Export dialog | `views.export_dialog()` offers PDF, Excel and JSON. Excel and JSON are download links. **PDF** runs the `fsPrintReport()` JavaScript helper: it opens a new tab straight away (so pop-up blockers allow it), fetches the printable report from the hidden `export_report` download link, writes it into the tab and calls `print()`. If the tab is blocked, it downloads the HTML report and shows a note instead. |
 | `input.upload` | CSV or Excel upload → `read_upload` → replaces `rows` for this session |
 | `SAMPLES` | the three test datasets offered in the Import dialog |
-| downloads | `export_report` (printable HTML), `export_excel` (workbook), `export_json`, `download_csv`, `download_example` (CSV), `download_example_xlsx`, `download_source` (zip). Report file names include the machine and date. |
+| downloads | `export_report` (printable HTML, used by the PDF option), `export_excel` (workbook), `export_json`, `download_csv`, `download_example` (CSV), `download_example_xlsx`, `download_source` (zip). Report file names include the machine and date. |
 | `ActionStore` | corrective-action status and notes in `data/actions.json`; set the `FORGE_ACTIONS_FILE` environment variable to store them elsewhere |
 
 **Configure dialog parameters**

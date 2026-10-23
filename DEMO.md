@@ -109,7 +109,11 @@ records status and notes there.
 
 ### Step 5 — Share the findings
 
-**Export report** downloads a printable report. Open it in a browser and choose **Print → Save as PDF** to
+Click **Export report** and choose a format:
+
+![The Export report dialog](docs/images/12_export_dialog.png)
+
+**PDF report** opens the printable report in a new tab with the print dialog. Choose **Save as PDF** to
 get a 5-page summary to send to the client or a manager.
 
 ![Page 1 of the printable report](docs/images/10_report_page1.png)
@@ -122,9 +126,9 @@ link to strength, so chamber oxygen comes first, flagged 5 builds before strengt
 
 The report ends with descriptive statistics, corrective-action status and notes, and the method and limitations.
 
-**Excel** downloads the same results as a workbook: a Summary sheet with a native Excel control chart, the full
+**Excel workbook** downloads the same results as a workbook: a Summary sheet with a native Excel control chart, the full
 build data with control limits and PASS/FAIL (failures shaded, filters on), and sheets for statistics,
-capability, signals, associations and corrective actions. **JSON** gives the same results in machine-readable form.
+capability, signals, associations and corrective actions. **JSON data** gives the same results in machine-readable form.
 
 **What actually happened** (from the dataset design): a chamber seal began leaking at build 41 and was
 replaced after build 60. The tool found the change, its timing and its cause from the data alone.

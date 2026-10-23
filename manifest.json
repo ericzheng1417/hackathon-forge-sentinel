@@ -18,13 +18,13 @@
       "checksum": "1c672af32698b693e3c006bd4f8f629f"
     },
     "DEMO.md": {
-      "checksum": "a1b6d24b6f41c382c110a710d1d4f819"
+      "checksum": "e45ff18f5936cabb242a6410b38a46cf"
     },
     "README.md": {
-      "checksum": "e74fadbf13ee30729820b4f00352e92e"
+      "checksum": "efc3a497854d9936100f07026560b6db"
     },
     "app.py": {
-      "checksum": "02ea9e93dbe211f9f849606c80e202e3"
+      "checksum": "3dd7f485c25fb9701a22a5a7e921a42a"
     },
     "datasets/01_stable_capable.csv": {
       "checksum": "2f08755726c4c3b6fc79fdaf798fc08e"
@@ -54,7 +54,7 @@
       "checksum": "85cfb3707fa55325504d041fc677fb1b"
     },
     "docs/REFERENCE.md": {
-      "checksum": "6580fd99641db7fbfb1fa7cef5413d2a"
+      "checksum": "27d9477c543638d1416f657c5f574cbe"
     },
     "docs/images/01_stable_overview.png": {
       "checksum": "a6edccee4993b9fa620c46e32025fd3d"
@@ -66,7 +66,7 @@
       "checksum": "9dc8ee4ae9589653664e917ccdd33d5c"
     },
     "docs/images/04_drift_control_oxygen.png": {
-      "checksum": "3e0f9875f82c8eeaf05cead94edf51bd"
+      "checksum": "558ef75501f0ae43b07db33b6f423bc9"
     },
     "docs/images/05_drift_parameters.png": {
       "checksum": "aab095db9c645d7309230917f502277a"
@@ -89,6 +89,9 @@
     "docs/images/11_report_page3.png": {
       "checksum": "f2cec5aea936960a4497d8881b267638"
     },
+    "docs/images/12_export_dialog.png": {
+      "checksum": "f8df65a75425d80055cd0802f3e5e453"
+    },
     "forge_sentinel/__init__.py": {
       "checksum": "c5abc752d33e41aead1de272f0eb02e7"
     },
@@ -105,7 +108,7 @@
       "checksum": "e2f0bc8069352a9c30b00330e17ad3ee"
     },
     "forge_sentinel/views.py": {
-      "checksum": "8d11f0a33e51ba529ce1222513ed122d"
+      "checksum": "cd9cbd2137709bce9a7468658d9fd867"
     },
     "python/analyze.py": {
       "checksum": "e6993be3191b205efaa34c4ec2137869"
@@ -126,7 +129,7 @@
       "checksum": "19955d58d55eb7b3cff91c4db76cc617"
     },
     "www/style.css": {
-      "checksum": "57fa2e31b171275d26fba1f9766626f7"
+      "checksum": "82cf443c5a73ed48c7c4ca9dcfab57be"
     }
   }
 }

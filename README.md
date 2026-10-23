@@ -91,12 +91,14 @@ Other controls:
 - **Configure**: change the spec limits (LSL/USL), Cpk target, baseline size and alarm thresholds, and
   choose which of the 8 tests (and the moving-range rule) to apply.
 - **Import data**: upload your own CSV or Excel file (format below), or load one of the three test datasets.
-- **Export report**: downloads a **printable report** (HTML). Open it in any browser and use **Print → Save as PDF**
-  for a 5-page summary: verdict, key numbers, I-MR charts, the 8 tests, capability, likely causes, statistics and
-  corrective-action status.
-- **Excel**: downloads a formatted **workbook** with a Summary sheet (including a native control chart), the
-  full data with control limits and pass/fail, statistics, capability, signals, associations and corrective actions.
-- **JSON**: the same results in machine-readable form, for archiving or other software.
+- **Export report**: opens a dialog where you choose the format, for the selected machine and current settings:
+  - **PDF report**: a printable 5-page summary covering the verdict, key numbers, I-MR charts, the 8 tests,
+    capability, likely causes, statistics and corrective-action status. It opens in a new tab with your browser's
+    print dialog; choose **Save as PDF**. If your browser blocks the new tab, the report downloads as an HTML file
+    instead, which you open and print the same way.
+  - **Excel workbook**: a Summary sheet with a native control chart, the full data with control limits and
+    pass/fail, statistics, capability, signals, associations and corrective actions.
+  - **JSON data**: the same results in machine-readable form, for archiving or other software.
 - **Click any point on a chart** to see that build's details.
 
 ---

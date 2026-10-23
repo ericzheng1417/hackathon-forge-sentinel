@@ -60,13 +60,37 @@ def heading(page: str) -> str:
     return (f'<div class="heading"><div><div class="eyebrow">PROCESS ASSURANCE / TITANIUM BRACKETS</div>'
             f'<h1>{title}</h1><p>{TAGLINES[page]}</p></div><div class="actions">'
             f'<button onclick="fsOpen(\'import\')">↥ &nbsp; Import data</button>'
-            f'<a id="export_report" class="shiny-download-link primary" href="" target="_blank" download '
-            f'title="Printable report (open, then Print → Save as PDF)">↓ &nbsp; Export report</a>'
-            f'<a id="export_excel" class="shiny-download-link small" href="" target="_blank" download '
-            f'title="Excel workbook: summary, chart, data, statistics, signals">Excel</a>'
-            f'<a id="export_json" class="shiny-download-link small" href="" target="_blank" download '
-            f'title="Machine-readable JSON">JSON</a>'
+            f'<button class="primary" onclick="fsOpen(\'export\')">↓ &nbsp; Export report</button>'
             f'</div></div>')
+
+
+def export_dialog(machine: str, n: int) -> str:
+    """Body of the Export report dialog: choose PDF, Excel or JSON.
+
+    Excel and JSON are Shiny download links. PDF opens the printable report in a new tab and starts the
+    browser's print dialog (choose "Save as PDF"); see fsPrintReport() in app.py. The hidden
+    export_report link supplies the report and is also the fallback if pop-ups are blocked."""
+    def option(tag_open, icon, title, desc, tag_close):
+        return (f'{tag_open}<span class="ico">{icon}</span><span class="txt"><b>{title}</b>'
+                f'<span>{desc}</span></span>{tag_close}')
+    close_soon = "setTimeout(function(){fsEvt('close_modal')},400)"
+    return (f'<h2>Export report</h2><p>Machine <b>{esc(machine)}</b> · {n} builds · current settings. '
+            'Choose a format:</p><div class="export-options">'
+            + option('<button type="button" class="export-option" onclick="fsPrintReport()">', "PDF",
+                     "PDF report",
+                     "A printable 5-page summary with charts. It opens in a new tab with your browser's print "
+                     "dialog; choose <i>Save as PDF</i>.", "</button>")
+            + option(f'<a id="export_excel" class="shiny-download-link export-option" href="" target="_blank" download '
+                     f'onclick="{close_soon}">', "XLSX", "Excel workbook",
+                     "Summary with a control chart, full data with limits and pass/fail, statistics, capability, "
+                     "signals, associations and corrective actions.", "</a>")
+            + option(f'<a id="export_json" class="shiny-download-link export-option" href="" target="_blank" download '
+                     f'onclick="{close_soon}">', "JSON", "JSON data",
+                     "The same results in machine-readable form, for archiving or other software.", "</a>")
+            + '</div><a id="export_report" class="shiny-download-link" href="" target="_blank" download '
+            'style="display:none">printable report</a>'
+            '<p class="note" id="fs-print-note" style="display:none">Your browser blocked the new tab, so the printable '
+            'report was downloaded instead. Open it and choose <b>Print → Save as PDF</b>.</p>')
 
 
 def tests_label(a: Analysis, mr_rule: bool) -> str:

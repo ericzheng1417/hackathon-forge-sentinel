@@ -73,6 +73,27 @@ function fsMachine(m){ fsEvt('machine', m); }
 function fsMetric(m){ fsEvt('metric', m); }
 function fsOpen(w){ fsEvt('open', w); }
 function fsAction(id, key, value){ fsEvt('action', {id: id, key: key, value: value}); }
+// "PDF report": open a tab now (synchronously, so pop-up blockers allow it), fetch the printable
+// report from its Shiny download link, write it into the tab and open the print dialog.
+function fsPrintReport(){
+  var link = document.getElementById('export_report');
+  if (!link || !link.href || link.href === window.location.href) { return; }
+  var w = window.open('', '_blank');
+  if (!w) {                                   // pop-up blocked: download the HTML report instead
+    link.click();
+    var note = document.getElementById('fs-print-note'); if (note) note.style.display = 'block';
+    return;
+  }
+  w.document.write('<p style="font:14px sans-serif;padding:24px">Preparing report…</p>');
+  fetch(link.href, {credentials: 'same-origin'})
+    .then(function(r){ if (!r.ok) throw new Error(r.status); return r.text(); })
+    .then(function(html){
+      w.document.open(); w.document.write(html); w.document.close();
+      setTimeout(function(){ w.focus(); w.print(); }, 600);
+      fsEvt('close_modal');
+    })
+    .catch(function(){ w.close(); link.click(); });
+}
 """
 
 app_ui = ui.page_bootstrap(
@@ -199,6 +220,11 @@ def server(input, output, session):
             show_import()
         elif kind == "open" and value == "config":
             show_config()
+        elif kind == "open" and value == "export":
+            ui.modal_show(ui.modal(close_button(), ui.HTML(views.export_dialog(machine(), len(stream()))),
+                                   easy_close=True, footer=None))
+        elif kind == "close_modal":
+            ui.modal_remove()
         elif kind == "apply_config":
             apply_config()
         elif kind == "sample" and value in SAMPLES:
