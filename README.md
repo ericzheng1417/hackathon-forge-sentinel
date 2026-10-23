@@ -8,7 +8,7 @@ Forge Sentinel is a web dashboard that helps a quality engineer answer one quest
 titanium (Ti-6Al-4V) brackets by laser powder bed fusion and is failing the client's tensile-strength
 acceptance tests.
 
-**What you give it:** a spreadsheet (CSV) of past builds, one row per build. Only three columns are
+**What you give it:** a spreadsheet (CSV or Excel .xlsx) of past builds, one row per build. Only three columns are
 required, and the contractor already has all of them: build ID, machine, and the tensile strength from
 the client test. Printer conditions you happen to log (chamber oxygen, humidity, plate temperature,
 laser power, scan speed, residual stress) are optional; each one you add unlocks root-cause analysis.
@@ -90,8 +90,13 @@ Other controls:
 - **Machine** dropdown (top): switch between printers. Each machine is analysed separately.
 - **Configure**: change the spec limits (LSL/USL), Cpk target, baseline size and alarm thresholds, and
   choose which of the 8 tests (and the moving-range rule) to apply.
-- **Import data**: upload your own CSV (format below).
-- **Export report**: download all results as a JSON file to keep a record.
+- **Import data**: upload your own CSV or Excel file (format below), or load one of the three test datasets.
+- **Export report**: downloads a **printable report** (HTML). Open it in any browser and use **Print → Save as PDF**
+  for a 5-page summary: verdict, key numbers, I-MR charts, the 8 tests, capability, likely causes, statistics and
+  corrective-action status.
+- **Excel**: downloads a formatted **workbook** with a Summary sheet (including a native control chart), the
+  full data with control limits and pass/fail, statistics, capability, signals, associations and corrective actions.
+- **JSON**: the same results in machine-readable form, for archiving or other software.
 - **Click any point on a chart** to see that build's details.
 
 ---
@@ -102,7 +107,8 @@ Other controls:
 try `py --version` if `python` isn't recognised.
 
 1. Download or clone this folder and open a terminal inside it.
-2. Install the one dependency, [Shiny for Python](https://shiny.posit.co/py/):
+2. Install the two dependencies, [Shiny for Python](https://shiny.posit.co/py/) and
+   [openpyxl](https://openpyxl.readthedocs.io/) (for Excel import and export):
    ```
    pip install -r requirements.txt
    ```
@@ -160,7 +166,9 @@ After deploying, open the app in Connect and use the **Access** tab to choose wh
 
 ## Using your own data
 
-Click **Import data** and upload a CSV with these column headers:
+Click **Import data** and upload a **CSV** or **Excel (.xlsx)** file with these column headers. In Excel, the
+first sheet whose first row contains `id`, `machine` and `strength` is used, so a cover sheet in front is
+fine. Headers are not case-sensitive. Old `.xls` files must be re-saved as `.xlsx` or CSV.
 
 | Column | Required? | Meaning | Unit |
 |---|---|---|---|
@@ -184,7 +192,7 @@ Rules:
 - **One row per build.** Several test samples from the same build are not independent results.
 - Keep each machine's data to one part type, material and process route, so you compare like with like.
 
-Click **Download example** in the Import window for a correctly formatted file.
+Click **Example (CSV)** or **Example (Excel)** in the Import window for a correctly formatted file.
 
 **Where your data goes:** an uploaded file is held in the server's memory only for your browser
 session. It is never saved to disk, and it's gone when you close the tab. Corrective-action notes are
@@ -196,10 +204,11 @@ copy of the app. Set the `FORGE_ACTIONS_FILE` environment variable to store them
 ## Offline analysis (no dashboard)
 
 `python/analyze.py` runs the same calculations from the command line and prints a JSON report. It
-uses only the Python standard library, so it doesn't need Shiny:
+uses only the Python standard library for CSV files (Excel files need `openpyxl`), so it doesn't need Shiny:
 
 ```
 python python/analyze.py my-builds.csv --machine LPBF-01 --lsl 900 > report.json
+python python/analyze.py my-builds.xlsx --machine LPBF-01 --usl 1100
 ```
 
 Options: `--lsl` (lower spec, default 900), `--usl` (upper spec; omit for minimum-only),
@@ -216,7 +225,8 @@ The report includes Cp/Cpk/Pp/Ppk, descriptive statistics, and every flagged bui
 app.py                     The Shiny app: page layout, buttons, uploads, downloads
 forge_sentinel/
   engine.py                All the statistics (descriptives, I-MR limits, 8 tests, Cp/Cpk/Pp/Ppk, Wilson, correlations)
-  data.py                  Demo data, CSV checking, CSV export
+  data.py                  Demo data, CSV / Excel import and checking, CSV / Excel export
+  exports.py               Printable HTML report, Excel workbook and JSON report
   charts.py                Draws the charts (as SVG images)
   views.py                 Builds the HTML for each page
 www/style.css              Visual styling
@@ -242,22 +252,24 @@ The tests check the statistics against known results, including reference output
 JavaScript version of this tool, each of the 8 special-cause tests on hand-built patterns, the
 descriptive statistics and Cp/Cpk formulas. They also cover CSV validation, optional columns, page
 rendering and the command-line tool. `tests/test_datasets.py` regenerates the test datasets, checks
-they match the committed files byte for byte, and checks every result quoted in [DEMO.md](DEMO.md).
+they match the committed files byte for byte, and checks every result quoted in [DEMO.md](DEMO.md). `tests/test_exports.py` covers Excel import (including awkward workbooks) and the HTML, Excel and JSON
+reports.
 
 ## Reproducing the results
 
 Everything in this repository can be regenerated from the code:
 
 ```
-pip install -r requirements.txt          # only needed for the dashboard
+pip install -r requirements.txt          # Shiny (dashboard) + openpyxl (Excel)
 python datasets/generate_datasets.py     # recreates the 3 test CSVs (fixed seeds)
 python demo/run_demo.py                  # recomputes every number in DEMO.md
-python -m unittest discover tests        # 36 automated checks
+python -m unittest discover tests        # 47 automated checks
 shiny run app.py                         # the dashboard
 ```
 
-The analysis engine, dataset generator, demo script, command-line tool and tests use only the Python
-standard library (Python 3.10+). Only the dashboard needs the `shiny` package. The Posit Connect
+The analysis engine, dataset generator, demo script and command-line tool use only the Python standard
+library for CSV data (Python 3.10+). The dashboard needs `shiny`; Excel import and the Excel export need
+`openpyxl` (if it's missing, the Excel tests are skipped and everything else still runs). The Posit Connect
 deployment uses Python 3.12.4 (see `manifest.json`).
 
 ---

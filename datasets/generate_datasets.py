@@ -4,8 +4,10 @@ Usage (from the repository root):
     python datasets/generate_datasets.py
 
 Writes three CSV files next to this script. Python standard library only; each
-scenario uses a fixed random seed, so the files are byte-for-byte identical on
-every run. See datasets/README.md for the scenarios and datasets/CODEBOOK.md for
+scenario uses a fixed random seed, so the CSV files are byte-for-byte identical on
+every run. If the openpyxl package is installed it also writes an Excel copy of the
+oxygen-drift dataset (02_oxygen_drift.xlsx) to demonstrate Excel import; its cell
+values are identical to the CSV (Excel files embed a save timestamp, so their bytes differ). See datasets/README.md for the scenarios and datasets/CODEBOOK.md for
 every variable.
 """
 from __future__ import annotations
@@ -98,12 +100,46 @@ def strength_only() -> list[dict]:
     return rows
 
 
+def write_xlsx(name: str, csv_path: pathlib.Path) -> pathlib.Path | None:
+    """Excel copy of a CSV (same header and values, numbers stored as numbers)."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font
+    except ImportError:
+        print("openpyxl not installed: skipping the Excel copy")
+        return None
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "builds"
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        for i, row in enumerate(csv.reader(fh)):
+            if i == 0:
+                ws.append(row)
+                continue
+            out = []
+            for c in row:
+                try:
+                    out.append(float(c))
+                except ValueError:
+                    out.append(c)
+            ws.append(out)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    ws.freeze_panes = "A2"
+    path = OUT / name
+    wb.save(path)
+    return path
+
+
 def main():
     written = [
         write("01_stable_capable.csv", stable_capable(), FULL_COLUMNS),
         write("02_oxygen_drift.csv", oxygen_drift(), FULL_COLUMNS),
         write("03_strength_only.csv", strength_only(), ["id", "machine", "strength"]),
     ]
+    xlsx = write_xlsx("02_oxygen_drift.xlsx", OUT / "02_oxygen_drift.csv")
+    if xlsx:
+        written.append(xlsx)
     for p in written:
         print(f"wrote {p.relative_to(OUT.parent)}")
 

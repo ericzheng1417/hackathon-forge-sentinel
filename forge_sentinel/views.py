@@ -60,7 +60,12 @@ def heading(page: str) -> str:
     return (f'<div class="heading"><div><div class="eyebrow">PROCESS ASSURANCE / TITANIUM BRACKETS</div>'
             f'<h1>{title}</h1><p>{TAGLINES[page]}</p></div><div class="actions">'
             f'<button onclick="fsOpen(\'import\')">↥ &nbsp; Import data</button>'
-            f'<a id="export_report" class="shiny-download-link primary" href="" target="_blank" download>↓ &nbsp; Export report</a>'
+            f'<a id="export_report" class="shiny-download-link primary" href="" target="_blank" download '
+            f'title="Printable report (open, then Print → Save as PDF)">↓ &nbsp; Export report</a>'
+            f'<a id="export_excel" class="shiny-download-link small" href="" target="_blank" download '
+            f'title="Excel workbook: summary, chart, data, statistics, signals">Excel</a>'
+            f'<a id="export_json" class="shiny-download-link small" href="" target="_blank" download '
+            f'title="Machine-readable JSON">JSON</a>'
             f'</div></div>')
 
 

@@ -9,13 +9,14 @@ automated tests in `tests/test_datasets.py` check.
 | [`01_stable_capable.csv`](01_stable_capable.csv) | LPBF-A, LPBF-B | 50 + 50 | all | Healthy process | Stable on both machines, Cpk ≈ 1.9 (≥ 1.33), no failures |
 | [`02_oxygen_drift.csv`](02_oxygen_drift.csv) | LPBF-C | 70 | all | Chamber leak, then repair | Oxygen flagged at build 44, strength at build 49; 3 failures; oxygen is the top suspect (r = −0.84) |
 | [`03_strength_only.csv`](03_strength_only.csv) | LPBF-D | 60 | id, machine, strength | Powder-lot change, minimal data | Shift caught at build 36, before any part fails; Ppk 0.64 |
+| [`02_oxygen_drift.xlsx`](02_oxygen_drift.xlsx) | LPBF-C | 70 | all | Excel copy of file 02 | Identical results; demonstrates Excel import |
 
 Every variable is defined in **[CODEBOOK.md](CODEBOOK.md)**.
 
 ## How to use them
 
 - **In the app:** click **Import data**, then one of the **Try a test dataset** buttons. The badge at the top
-  shows which dataset is loaded. You can also upload the CSV files directly.
+  shows which dataset is loaded. You can also upload the CSV files, or `02_oxygen_drift.xlsx`, directly.
 - **From the command line:**
   ```
   python python/analyze.py datasets/02_oxygen_drift.csv --machine LPBF-C --usl 1100
@@ -110,6 +111,9 @@ python datasets/generate_datasets.py
   no signals before the leak or after the repair in the drift file. This keeps the demonstration easy
   to follow. Real data will contain occasional false alarms.
 - Values are rounded to one decimal place, like typical machine logs and test reports.
+- If `openpyxl` is installed, the script also writes `02_oxygen_drift.xlsx`, an Excel copy of file 02 with the
+  same cell values. Excel files store a save timestamp, so its bytes differ between runs, but its contents
+  don't. `tests/test_exports.py` checks that it imports identically to the CSV.
 
 **These values are illustrative.** They are plausible for a hot-isostatically-pressed or
 stress-relieved Ti-6Al-4V LPBF process, but they are not material allowables, and the effect sizes

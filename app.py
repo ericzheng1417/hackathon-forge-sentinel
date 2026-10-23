@@ -13,11 +13,11 @@ import pathlib
 import statistics as st
 import threading
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime
 
 from shiny import App, reactive, render, ui
 
-from forge_sentinel import data, engine, views
+from forge_sentinel import data, engine, exports, views
 
 ROOT = pathlib.Path(__file__).resolve().parent
 WWW = ROOT / "www"
@@ -56,11 +56,7 @@ TASK_IDS = {t[0] for t in views.TASKS}
 
 # Test datasets shipped in datasets/ that can be loaded from the Import dialog (see datasets/README.md)
 DATASETS = ROOT / "datasets"
-SAMPLES = {
-    "stable": ("01_stable_capable.csv", "Stable & capable"),
-    "drift": ("02_oxygen_drift.csv", "Oxygen drift"),
-    "minimal": ("03_strength_only.csv", "Strength only (minimal inputs)"),
-}
+SAMPLES = data.SAMPLE_DATASETS
 
 # -- UI -------------------------------------------------------------------
 
@@ -244,15 +240,17 @@ def server(input, output, session):
                     '<p><b>Try a test dataset</b> (described in <code>datasets/README.md</code>):</p>'
                     '<div class="actions samples" style="margin:8px 0 14px;flex-wrap:wrap">'
                     + "".join(f'<button onclick="fsEvt(\'sample\',\'{k}\')">{lab}</button>' for k, (_, lab) in SAMPLES.items())
-                    + '</div><p><b>Or upload your own CSV:</b> one row per build/test result, oldest first, at least 30 rows '
+                    + '</div><p><b>Or upload your own file</b> (CSV, or Excel .xlsx: the first sheet with an id / machine / '
+                    'strength header row is used): one row per build/test result, oldest first, at least 30 rows '
                     'per machine. Use one consistent part family, material, orientation and heat-treatment route.</p>'
                     '<p><b>Required columns:</b> id, machine, strength (MPa).<br><b>Optional columns:</b> oxygen (ppm), '
                     'humidity (%), temperature (°C), power (W), speed (mm/s), stress (MPa). Leave out any you don\'t '
                     'measure; blank cells are allowed. IDs must be unique within a machine. Import replaces the current '
                     'dataset for this browser session.</p>'
                     '<div class="actions" style="margin:14px 0"><a id="download_example" class="shiny-download-link" '
-                    'href="" target="_blank" download>Download example</a></div>'),
-            ui.input_file("upload", "Choose CSV", accept=[".csv", "text/csv"], multiple=False,
+                    'href="" target="_blank" download>Example (CSV)</a><a id="download_example_xlsx" '
+                    'class="shiny-download-link" href="" target="_blank" download>Example (Excel)</a></div>'),
+            ui.input_file("upload", "Choose a CSV or Excel file", accept=[".csv", "text/csv", ".xlsx", ".xlsm"], multiple=False,
                           button_label="Browse…", placeholder="No file selected"),
             ui.output_ui("import_error"),
             ui.HTML('<button class="link" style="border:0;background:none;color:var(--green);font-size:11px;padding:0" '
@@ -324,7 +322,7 @@ def server(input, output, session):
             return
         try:
             raw = pathlib.Path(files[0]["datapath"]).read_bytes()
-            parsed = data.parse_csv(raw)
+            parsed = data.read_upload(raw, files[0]["name"])
         except data.ImportError_ as e:
             import_err.set(str(e))
             return
@@ -332,11 +330,26 @@ def server(input, output, session):
         ui.notification_show(f"Imported {len(parsed)} rows from {files[0]['name']}.", type="message", duration=4)
 
     # ---- downloads ----
-    @render.download(filename="forge-process-report.json")
+    def report_context() -> exports.ReportContext:
+        return exports.build_context(stream(), cfg(), machine=machine(), source=source(), actions=STORE.load(),
+                                     tasks=views.TASKS, generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+    def report_name(ext: str) -> str:
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in machine())
+        return f"forge-report-{safe}-{datetime.now():%Y%m%d}.{ext}"
+
+    @render.download(filename=lambda: report_name("html"))
     def export_report():
-        rep = engine.report(a(), source=source(), machine=machine(), config=cfg(), actions=STORE.load(),
-                            generated_at=datetime.now(timezone.utc).isoformat())
-        yield json.dumps(rep, indent=2, ensure_ascii=False)
+        """Printable report: open in a browser, then Print → Save as PDF."""
+        yield exports.html_report(report_context())
+
+    @render.download(filename=lambda: report_name("xlsx"))
+    def export_excel():
+        yield exports.excel_report(report_context())
+
+    @render.download(filename=lambda: report_name("json"))
+    def export_json():
+        yield exports.json_report(report_context())
 
     @render.download(filename="forge-builds.csv")
     def download_csv():
@@ -345,6 +358,10 @@ def server(input, output, session):
     @render.download(filename="forge-builds.csv")
     def download_example():
         yield data.to_csv(rows())
+
+    @render.download(filename="forge-builds.xlsx")
+    def download_example_xlsx():
+        yield data.to_xlsx(rows())
 
     @render.download(filename="forge-sentinel-shiny-source.zip")
     def download_source():

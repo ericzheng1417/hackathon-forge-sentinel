@@ -1,15 +1,30 @@
-"""Demonstration data, CSV import validation and CSV export."""
+"""Demonstration data, CSV / Excel import validation, and CSV / Excel export.
+
+CSV handling uses only the standard library. Excel (.xlsx) support uses the
+`openpyxl` package, imported only when an Excel file is actually read or written,
+so the engine and command-line tool still run without it for CSV files.
+"""
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 import math
 import statistics as st
 
-from .engine import COLUMNS, FIELDS, REQUIRED_COLUMNS, present
+from .engine import COLUMNS, FIELDS, REQUIRED_COLUMNS, VARS, present
 
-MAX_BYTES = 2_000_000
+MAX_BYTES = 2_000_000          # CSV upload limit
+MAX_EXCEL_BYTES = 5_000_000    # .xlsx files are larger for the same data
 MIN_ROWS_PER_MACHINE = 30
+EXCEL_EXTENSIONS = (".xlsx", ".xlsm")
+
+# Test datasets shipped in datasets/ (see datasets/README.md): key -> (file name, display name)
+SAMPLE_DATASETS = {
+    "stable": ("01_stable_capable.csv", "Stable & capable"),
+    "drift": ("02_oxygen_drift.csv", "Oxygen drift"),
+    "minimal": ("03_strength_only.csv", "Strength only (minimal inputs)"),
+}
 
 
 def _r1(v: float) -> float:
@@ -38,7 +53,18 @@ def seed_rows() -> list[dict]:
 
 
 class ImportError_(ValueError):
-    """Raised with a user-facing message when a CSV fails validation."""
+    """Raised with a user-facing message when an uploaded file fails validation."""
+
+
+def read_upload(raw: bytes, filename: str) -> list[dict]:
+    """Parse an uploaded file by extension: .xlsx/.xlsm → parse_excel, anything else → parse_csv."""
+    name = (filename or "").lower()
+    if name.endswith(EXCEL_EXTENSIONS):
+        return parse_excel(raw)
+    if name.endswith(".xls"):
+        raise ImportError_("Old .xls files aren't supported. In Excel, use File → Save As → Excel Workbook (.xlsx) "
+                           "or CSV UTF-8.")
+    return parse_csv(raw)
 
 
 def parse_csv(raw: bytes | str) -> list[dict]:
@@ -62,8 +88,66 @@ def parse_csv(raw: bytes | str) -> list[dict]:
                  if any(c.strip() for c in row)]
     except csv.Error as e:
         raise ImportError_(f"Could not parse CSV: {e}.") from None
+    return validate_table(lines)
+
+
+def _excel_cell(v) -> str:
+    """Convert an Excel cell value to the text form the validator expects."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    if isinstance(v, (dt.datetime, dt.date)):
+        return v.isoformat()
+    return str(v)
+
+
+def parse_excel(raw: bytes) -> list[dict]:
+    """Validate an uploaded Excel workbook (.xlsx) and return rows as dicts.
+
+    Uses the first worksheet whose first non-empty row contains the required
+    headers (id, machine, strength); otherwise the first worksheet. Cell values
+    are read as stored (formula cells use the result Excel last saved). The same
+    rules as parse_csv then apply.
+    """
+    if len(raw) > MAX_EXCEL_BYTES:
+        raise ImportError_("Maximum Excel file size is 5 MB.")
+    try:
+        import openpyxl
+    except ImportError:  # pragma: no cover - depends on the environment
+        raise ImportError_("Excel import needs the openpyxl package (pip install openpyxl). "
+                           "Or save the sheet as CSV UTF-8.") from None
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception:
+        raise ImportError_("Could not open the file as an Excel workbook (.xlsx).") from None
+    try:
+        sheets = []
+        for ws in wb.worksheets:
+            rows = [[_excel_cell(c) for c in row] for row in ws.iter_rows(values_only=True)]
+            rows = [r for r in rows if any(c.strip() for c in r)]
+            sheets.append(rows)
+            if rows and all(h in [c.strip().lower() for c in rows[0]] for h in REQUIRED_COLUMNS):
+                break
+        else:
+            rows = sheets[0] if sheets else []
+    finally:
+        wb.close()
+    if rows:
+        width = len(rows[0])
+        while width and not rows[0][width - 1].strip():   # drop trailing blank header cells
+            width -= 1
+        rows = [(r + [""] * width)[:width] for r in rows]
+    return validate_table(rows)
+
+
+def validate_table(lines: list[list[str]]) -> list[dict]:
+    """Shared validation for CSV and Excel: header row first, then one row per build (all text)."""
     if not lines:
         raise ImportError_("The file is empty.")
+    lines = list(lines)
     head = [h.strip().lower() for h in lines.pop(0)]
     missing = [h for h in REQUIRED_COLUMNS if h not in head]
     if missing:
@@ -125,6 +209,29 @@ def to_csv(rows: list[dict]) -> str:
     w.writerow(cols)
     for r in rows:
         w.writerow([_fmt_cell(r.get(c)) for c in cols])
+    return buf.getvalue()
+
+
+def to_xlsx(rows: list[dict], sheet: str = "builds") -> bytes:
+    """Excel workbook with the same columns as to_csv (needs openpyxl)."""
+    import openpyxl
+    from openpyxl.styles import Font
+
+    cols = list(REQUIRED_COLUMNS[:2]) + [c for c in FIELDS
+                                         if c == "strength" or any(present(r.get(c)) for r in rows)]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet
+    ws.append(cols)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for r in rows:
+        ws.append([r.get(c) for c in cols])
+    for i, c in enumerate(cols, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 12 if c in VARS or c == "machine" else 10
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 

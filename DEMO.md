@@ -13,7 +13,8 @@ builds, all 8 tests plus the moving-range rule.
 ## Reproduce it yourself
 
 **In the dashboard** (locally with `shiny run app.py`, or on the deployed Posit Connect app): click
-**Import data**, then pick one of the **Try a test dataset** buttons.
+**Import data**, then pick one of the **Try a test dataset** buttons. To try Excel import, upload
+`datasets/02_oxygen_drift.xlsx` instead; it gives the same results as the CSV.
 
 **Without the dashboard:** run the same analysis from the command line (standard library only):
 
@@ -104,7 +105,26 @@ stable dataset.
 
 Finally, **Corrective actions** lists the response, starting with *Contain affected production* and
 *Investigate chamber atmosphere* (check the oxygen sensor, purge logs, seals and gas flow). The engineer
-records status and notes there, and **Export report** saves everything, including the signal list, as JSON.
+records status and notes there.
+
+### Step 5 — Share the findings
+
+**Export report** downloads a printable report. Open it in a browser and choose **Print → Save as PDF** to
+get a 5-page summary to send to the client or a manager.
+
+![Page 1 of the printable report](docs/images/10_report_page1.png)
+
+Page 1 has the verdict, key numbers and the I-MR charts. Later pages cover the 8 tests and signal log,
+capability and out-of-spec builds, and **Where to look**. That section ranks process variables by their
+link to strength, so chamber oxygen comes first, flagged 5 builds before strength:
+
+![Page 3 of the printable report: capability and where to look](docs/images/11_report_page3.png)
+
+The report ends with descriptive statistics, corrective-action status and notes, and the method and limitations.
+
+**Excel** downloads the same results as a workbook: a Summary sheet with a native Excel control chart, the full
+build data with control limits and PASS/FAIL (failures shaded, filters on), and sheets for statistics,
+capability, signals, associations and corrective actions. **JSON** gives the same results in machine-readable form.
 
 **What actually happened** (from the dataset design): a chamber seal began leaking at build 41 and was
 replaced after build 60. The tool found the change, its timing and its cause from the data alone.

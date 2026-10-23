@@ -7,7 +7,8 @@ For a user-level introduction see the [README](../README.md); for the data forma
 ```
 app.py                        Shiny UI + server: state, events, dialogs, uploads, downloads
 forge_sentinel/engine.py      Statistics (standard library only) — used by the app AND the CLI
-forge_sentinel/data.py        Demo data, CSV validation/import, CSV export
+forge_sentinel/data.py        Demo data, CSV / Excel validation and import, CSV / Excel export
+forge_sentinel/exports.py     Printable HTML report, Excel workbook, JSON report
 forge_sentinel/charts.py      SVG charts (I chart, MR chart, histogram, box plot, scatter)
 forge_sentinel/views.py       HTML for each page (pure functions; no Shiny import)
 python/analyze.py             Command-line interface
@@ -15,8 +16,9 @@ datasets/generate_datasets.py Reproducible test-data generator
 demo/run_demo.py              Text demonstration on the three test datasets
 ```
 
-**Data flow:** CSV → `data.parse_csv` → rows (list of dicts) → filter to one machine →
+**Data flow:** CSV or Excel → `data.read_upload` → rows (list of dicts) → filter to one machine →
 `engine.analyze_stream` → `Analysis` → `views.render_page` / `charts.*` → HTML shown by `app.py`.
+Exports: rows + settings → `exports.build_context` → `html_report` / `excel_report` / `json_report`.
 
 ---
 
@@ -194,10 +196,28 @@ It raises `ValueError` if the baseline is < 10 or ≥ n, if strength is not posi
 
 | Function | Inputs → output | Notes |
 |---|---|---|
+| `read_upload(raw, filename)` | bytes + file name → rows | Routes `.xlsx`/`.xlsm` to `parse_excel` and everything else to `parse_csv`; rejects old `.xls` with a re-save hint. |
+| `parse_excel(raw)` | `.xlsx` bytes → rows | Needs `openpyxl`. Uses the first worksheet whose first non-empty row contains id/machine/strength (otherwise the first sheet); reads stored values (formula cells use the value Excel last saved); converts numbers stored as whole floats to text IDs, dates to ISO text; pads ragged rows. Then applies `validate_table`. 5 MB limit. |
+| `validate_table(lines)` | list of text rows (header first) → rows | The shared validation used by both CSV and Excel (the rules listed for `parse_csv`). |
 | `parse_csv(raw)` | bytes or str → list of row dicts | Requires `id`, `machine`, `strength`; the 6 optional columns may be absent or blank (stored as `None`); extra columns are ignored; headers are case-insensitive. Rejects files over 2 MB, non-numeric values, out-of-range values (strength ≤ 0, oxygen < 0, humidity outside 0–100, power or speed ≤ 0), duplicate IDs within a machine, fewer than 30 rows per machine, and zero strength variation in the first 25 builds. Raises `ImportError_` with a message naming the row. |
 | `to_csv(rows)` | rows → CSV text | Writes the required columns plus any optional column that has values; blanks for `None`. |
+| `to_xlsx(rows)` | rows → `.xlsx` bytes | Same columns as `to_csv`, bold header, frozen header row. Needs `openpyxl`. |
+| `SAMPLE_DATASETS` | dict | `{key: (file name, display name)}` for the test datasets offered in the Import dialog. |
 | `machine_list(rows)` | rows → machine names | In order of first appearance. |
 | `seed_rows()` | → rows | Built-in demo data shown when the app opens (LPBF-01 deteriorates after build 39; LPBF-02 is stable). |
+
+## `forge_sentinel/exports.py`
+
+All three exports are built from one context, so they agree with each other and with the dashboard.
+
+| Function | Inputs → output | Notes |
+|---|---|---|
+| `build_context(stream, cfg, *, machine, source, actions, tasks, generated_at)` | one machine's rows + settings → `ReportContext` | Runs the strength analysis, an analysis for every recorded process variable, `describe()` per variable, `associations()` and the Wilson interval, all with the dashboard's current settings. |
+| `html_report(ctx)` | → HTML text | Self-contained printable report: header and settings, verdict, KPI tiles, I and MR charts, the 8-test table and strength signal log, capability (histogram + indices), out-of-spec builds, early warnings on process variables, associations + scatter, descriptive statistics, corrective actions, method and limitations. A4 print stylesheet; about 5 pages; a "Print / Save as PDF" button (hidden when printing). |
+| `excel_report(ctx)` | → `.xlsx` bytes | Sheets: **Summary** (settings, key metrics, native line chart of strength with centre/UCL/LCL/LSL), **Data** (every build with process variables, control limits, moving range, PASS/FAIL, phase, signals; failures shaded; filter on), **Statistics**, **Capability** (indices + inputs + Wilson), **Signals** (strength and process variables, plus counts per test), **Associations**, **Corrective actions**. Needs `openpyxl`. |
+| `json_report(ctx)` | → JSON text | `engine.report()` plus `process_variable_signals` and `conformance` (pass rate, Wilson interval, failed builds). |
+| `key_metrics(ctx)` | → list of (label, value, note) | Used by both the HTML and Excel summaries. |
+| `early_warnings(ctx)` | → list of dicts | Process variables with signals: count, first flagged build, reasons, r with strength, and how many builds before the first strength signal. Ranked by \|r\| so the likely cause comes first. |
 
 ## `forge_sentinel/charts.py`
 
@@ -226,9 +246,9 @@ variable to its `describe()` output. `build_detail(a, i)` builds the pop-up for 
 | reactive state | `rows`, `source`, `page`, `machine`, `metric`, `cfg` (one copy per browser session) |
 | `stream()`, `a()`, `am()`, `avail()` | the selected machine's rows, the strength analysis, the selected-variable analysis, the recorded variables |
 | `input.fs_evt` | a single event channel: `nav`, `machine`, `metric`, `build`, `open`, `apply_config`, `sample`, `restore_demo`, `action` |
-| `input.upload` | CSV upload → `parse_csv` → replaces `rows` for this session |
+| `input.upload` | CSV or Excel upload → `read_upload` → replaces `rows` for this session |
 | `SAMPLES` | the three test datasets offered in the Import dialog |
-| downloads | `export_report` (JSON), `download_csv`, `download_example`, `download_source` (zip) |
+| downloads | `export_report` (printable HTML), `export_excel` (workbook), `export_json`, `download_csv`, `download_example` (CSV), `download_example_xlsx`, `download_source` (zip). Report file names include the machine and date. |
 | `ActionStore` | corrective-action status and notes in `data/actions.json`; set the `FORGE_ACTIONS_FILE` environment variable to store them elsewhere |
 
 **Configure dialog parameters**
@@ -253,7 +273,7 @@ python python/analyze.py CSV --machine NAME [--lsl 900] [--usl 1100] [--baseline
 
 | Argument | Meaning |
 |---|---|
-| `CSV` | path to a build CSV (see the codebook) |
+| `CSV` | path to a build file: `.csv`, or `.xlsx` (needs `openpyxl`); see the codebook |
 | `--machine` | machine to analyse (required) |
 | `--lsl`, `--usl` | specification limits in MPa; omit `--usl` for a one-sided spec |
 | `--baseline` | number of baseline builds (≥ 10 and < n) |
@@ -278,3 +298,5 @@ process variables, top associations), using `DEFAULT_CONFIG`.
 - `test_engine.py` covers parity with the original JavaScript calculations, each of the 8 tests,
   descriptive statistics, Cp/Cpk, CSV validation, optional columns, page rendering and the CLI.
 - `test_datasets.py` checks that the datasets regenerate byte for byte and give the documented results.
+- `test_exports.py` covers Excel import (round trip, the shipped `.xlsx`, a messy real-world workbook, bad files,
+  CLI), the HTML report, the JSON report and the Excel workbook. Excel tests are skipped if `openpyxl` is missing.

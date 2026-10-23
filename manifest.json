@@ -18,13 +18,13 @@
       "checksum": "1c672af32698b693e3c006bd4f8f629f"
     },
     "DEMO.md": {
-      "checksum": "a82a0bf353b4def05f5b72032ea93147"
+      "checksum": "a1b6d24b6f41c382c110a710d1d4f819"
     },
     "README.md": {
-      "checksum": "78e929ba5e55d8f49329bc282356ae07"
+      "checksum": "e74fadbf13ee30729820b4f00352e92e"
     },
     "app.py": {
-      "checksum": "188cea13d0ecd401d232711b9b45265c"
+      "checksum": "02ea9e93dbe211f9f849606c80e202e3"
     },
     "datasets/01_stable_capable.csv": {
       "checksum": "2f08755726c4c3b6fc79fdaf798fc08e"
@@ -32,17 +32,20 @@
     "datasets/02_oxygen_drift.csv": {
       "checksum": "4d74ce2c678e2aeb13d866126cf97ac3"
     },
+    "datasets/02_oxygen_drift.xlsx": {
+      "checksum": "3ba367aeba6f6a23ac1e133a61efd9a1"
+    },
     "datasets/03_strength_only.csv": {
       "checksum": "de3032c2d857a635be583e2ffdb509a5"
     },
     "datasets/CODEBOOK.md": {
-      "checksum": "a266136c3d8e2d36604554db731ae376"
+      "checksum": "3bc44b7971a8b02ce2022af82c7faa7b"
     },
     "datasets/README.md": {
-      "checksum": "e299bf8f1fcc0f35a73f611263839d63"
+      "checksum": "be704d8bd828bdaac7c631cb6071e8cc"
     },
     "datasets/generate_datasets.py": {
-      "checksum": "b02b903b031c49856f32a9b9d57380b5"
+      "checksum": "aef16a9d1da8a68c3e1d7dc34a54cb66"
     },
     "demo/demo_output.txt": {
       "checksum": "4826dcf37f347ec81759288d9bd45714"
@@ -51,7 +54,7 @@
       "checksum": "85cfb3707fa55325504d041fc677fb1b"
     },
     "docs/REFERENCE.md": {
-      "checksum": "449eca076598bf8b6a2a204880aaef5c"
+      "checksum": "6580fd99641db7fbfb1fa7cef5413d2a"
     },
     "docs/images/01_stable_overview.png": {
       "checksum": "a6edccee4993b9fa620c46e32025fd3d"
@@ -80,6 +83,12 @@
     "docs/images/09_minimal_control.png": {
       "checksum": "85dc2d13ab2a9ed2bcb042621628ec24"
     },
+    "docs/images/10_report_page1.png": {
+      "checksum": "cac967e7cff09e92c9b7f056da002807"
+    },
+    "docs/images/11_report_page3.png": {
+      "checksum": "f2cec5aea936960a4497d8881b267638"
+    },
     "forge_sentinel/__init__.py": {
       "checksum": "c5abc752d33e41aead1de272f0eb02e7"
     },
@@ -87,19 +96,22 @@
       "checksum": "7b519cb9780571bb5e926f4750ffae89"
     },
     "forge_sentinel/data.py": {
-      "checksum": "c4e4c287a8bd2bd977a2398d80c21fd4"
+      "checksum": "7287cd7839092cd84f0d950a0b4fbab3"
     },
     "forge_sentinel/engine.py": {
       "checksum": "7ce4ed81cedec69593a3bdc5b4464ee4"
     },
+    "forge_sentinel/exports.py": {
+      "checksum": "e2f0bc8069352a9c30b00330e17ad3ee"
+    },
     "forge_sentinel/views.py": {
-      "checksum": "aeb953ff43abd80d438d64f0e693ddf1"
+      "checksum": "8d11f0a33e51ba529ce1222513ed122d"
     },
     "python/analyze.py": {
-      "checksum": "7f65d9927ee1d1088aabeb6e09dfd2ee"
+      "checksum": "e6993be3191b205efaa34c4ec2137869"
     },
     "requirements.txt": {
-      "checksum": "ad6f98e7dfdd6ca7440ecfdd50795518"
+      "checksum": "794e4f138c46701a6371359dcbb25676"
     },
     "tests/js_reference.json": {
       "checksum": "34028249738c44515f4e9dfd8407ccd8"
@@ -110,8 +122,11 @@
     "tests/test_engine.py": {
       "checksum": "944b5da7fcad908a289e5eccae1f96ba"
     },
+    "tests/test_exports.py": {
+      "checksum": "19955d58d55eb7b3cff91c4db76cc617"
+    },
     "www/style.css": {
-      "checksum": "89b94b2a61d5e68ca94f91dbbfa9bd0c"
+      "checksum": "57fa2e31b171275d26fba1f9766626f7"
     }
   }
 }

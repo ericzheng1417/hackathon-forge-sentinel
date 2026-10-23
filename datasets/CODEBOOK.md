@@ -7,6 +7,15 @@ by CSV import in the app, and by `python/analyze.py`.
 result.** Rows must be in the order the builds were made, oldest first, because the tool uses row
 order as time order.
 
+## File formats
+
+- **CSV** (UTF-8, comma-separated, first row = headers), or
+- **Excel workbook (.xlsx / .xlsm)**: the first worksheet whose first non-empty row contains `id`, `machine`
+  and `strength` is used, so a cover or notes sheet in front is fine. Numbers should be stored as numbers.
+  Formula cells use the value Excel last saved. Old `.xls` files must be re-saved as `.xlsx` or CSV.
+
+The column rules below are the same for both formats.
+
 ## Summary
 
 | Column | Required? | Type | Unit | Example | Valid values |
